@@ -38,10 +38,13 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     /** 已提交文字队列（回调线程写入，客户端 tick 消费） */
     private final ConcurrentLinkedQueue<String> commitQueue = new ConcurrentLinkedQueue<String>();
 
-    /** 当前组字预览串（用于文本框下划线展示） */
-    private volatile String compositionText = "";
-    /** 是否正在组字 */
-    private volatile boolean composing = false;
+    /** 当前组字快照（对齐 PreeditEvent 形态； null 表示未在组字） */
+    private volatile IMEBridge.CompositionInfo compositionInfo = null;
+
+    /** Mixin 渲染时上报的光标 GUI 坐标（组字预览插入点）；-1 表示尚未上报 */
+    private volatile int caretGuiX = -1;
+    /** 光标底部的 GUI Y 坐标（候选窗紧贴其下方） */
+    private volatile int caretGuiY = -1;
 
     /** 已解析到的窗口句柄，0 表示尚未获取 */
     private long hwnd = 0L;
@@ -93,7 +96,34 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * @return 当前组字串
      */
     public static String getCompositionText() {
-        return INSTANCE.composing ? INSTANCE.compositionText : "";
+        IMEBridge.CompositionInfo info = INSTANCE.compositionInfo;
+        return info != null && info.isComposing ? info.composition : "";
+    }
+
+    /**
+     * 当前组字快照（分段 + 聚焦段 + 光标，对齐 PreeditEvent 形态）。
+     * 供 Mixin 渲染分段高亮预览使用。
+     * Current composition snapshot (blocks + focused block + caret) for inline rendering.
+     *
+     * @return 组字快照；未在组字时返回 null
+     */
+    public static IMEBridge.CompositionInfo getCompositionInfo() {
+        IMEBridge.CompositionInfo info = INSTANCE.compositionInfo;
+        return info != null && info.isComposing && info.composition.length() > 0 ? info : null;
+    }
+
+    /**
+     * 由 Mixin 在渲染组字预览时上报光标位置（GUI 逻辑坐标），
+     * 供候选窗跟随光标定位；坐标在 tick 中按 guiScale 换算为像素。
+     * Reported by the Mixin at render time: caret position in GUI coordinates,
+     * converted to pixels (guiScale) each tick for candidate window placement.
+     *
+     * @param guiX 光标 GUI X（组字预览插入点）
+     * @param guiY 光标底部 GUI Y
+     */
+    public static void reportCaretPos(int guiX, int guiY) {
+        INSTANCE.caretGuiX = guiX;
+        INSTANCE.caretGuiY = guiY;
     }
 
     // ============================================================
@@ -129,6 +159,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         } else {
             // 未聚焦文本框时丢弃残留的提交，避免下次插入到错误位置
             commitQueue.clear();
+            // 光标上报失效，回退到文本框坐标兼底 / Invalidate stale caret report
+            caretGuiX = -1;
+            caretGuiY = -1;
         }
     }
 
@@ -162,16 +195,28 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
     }
 
-    /** 计算并同步候选窗位置（GUI 坐标→窗口客户区像素坐标） */
+    /**
+     * 计算并同步候选窗位置（GUI 坐标→窗口客户区像素坐标）。
+     * 优先使用 Mixin 上报的光标位置（跟随光标，对齐准绳的 setTextInputArea 语义），
+     * 尚未上报时回退到文本框左下角。
+     * Prefers the caret position reported by the Mixin (caret following, matching
+     * the modern setTextInputArea semantics); falls back to the field's corner.
+     */
     private void updateCandidatePos(Minecraft mc, GuiScreen screen, GuiTextField field) {
         if (screen.width <= 0 || screen.height <= 0) {
             return;
         }
         double scaleX = (double) mc.displayWidth / (double) screen.width;
         double scaleY = (double) mc.displayHeight / (double) screen.height;
-        // 光标近似位置：文本框左下角（GUI 单位），足够让候选窗贴近输入位置
-        int px = (int) Math.round(field.xPosition * scaleX);
-        int py = (int) Math.round((field.yPosition + field.height) * scaleY);
+        int guiX = caretGuiX;
+        int guiY = caretGuiY;
+        if (guiX < 0 || guiY < 0) {
+            // 回退：文本框左下角（GUI 单位） / Fallback: field bottom-left corner
+            guiX = field.xPosition;
+            guiY = field.yPosition + field.height;
+        }
+        int px = (int) Math.round(guiX * scaleX);
+        int py = (int) Math.round(guiY * scaleY);
         IMEBridge.setCandidatePos(hwnd, px, py);
     }
 
@@ -212,8 +257,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     @Override
     public void onCompositionUpdate(IMEBridge.CompositionInfo info) {
-        this.compositionText = info.composition == null ? "" : info.composition;
-        this.composing = info.isComposing;
+        this.compositionInfo = info;
     }
 
     @Override

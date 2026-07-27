@@ -183,25 +183,81 @@ public class IMEBridge {
 
     /**
      * IME 组字状态快照。
+     * <p>
+     * 形态对齐高版本 MC 的 {@code PreeditEvent(fullText, caretPosition, blocks, focusedBlock)}：
+     * 在扁平组字串之上补充了分段（clause）、聚焦段与光标位置，
+     * 数据来自 IMM32 的 {@code GCS_COMPCLAUSE} / {@code GCS_COMPATTR} / {@code GCS_CURSORPOS}。
+     * Aligned with the modern {@code PreeditEvent} shape: clause segmentation,
+     * focused clause and caret position on top of the flat composition string.
      */
     public static class CompositionInfo {
         /** 当前读音（原始拼音/假名） */
         public final String reading;
-        /** 当前组字串（转换中的文字） */
+        /** 当前组字串（转换中的文字，即 fullText） */
         public final String composition;
+        /** 光标在组字串中的字符索引（0..length） */
+        public final int caretPosition;
+        /** 分段/分句片段；无分段信息时为单元素数组（整串作一段） */
+        public final String[] blocks;
+        /** 当前聚焦分段的索引 */
+        public final int focusedBlock;
         /** IME 是否正在组字中 */
         public final boolean isComposing;
 
-        public CompositionInfo(String reading, String composition, boolean isComposing) {
-            this.reading = reading;
-            this.composition = composition;
+        /**
+         * 由本地层回调构造：传入 IMM32 分段边界数组，在此切分为 blocks。
+         * Constructed from native callback: clause boundaries are split into blocks here.
+         *
+         * @param reading      读音串
+         * @param composition  组字串
+         * @param caretPosition 光标字符索引
+         * @param clauses      分段边界（GCS_COMPCLAUSE，首尾为 0 与串长），可为 null
+         * @param focusedBlock 聚焦分段索引
+         * @param isComposing  是否组字中
+         */
+        public CompositionInfo(String reading, String composition, int caretPosition,
+                               int[] clauses, int focusedBlock, boolean isComposing) {
+            this.reading = reading == null ? "" : reading;
+            this.composition = composition == null ? "" : composition;
+            int len = this.composition.length();
+            // 光标钳位到 [0, len] / Clamp caret into [0, len]
+            this.caretPosition = Math.max(0, Math.min(caretPosition, len));
+            this.blocks = splitBlocks(this.composition, clauses);
+            // 聚焦段钳位到合法索引 / Clamp focused block into valid range
+            this.focusedBlock = Math.max(0, Math.min(focusedBlock, this.blocks.length - 1));
             this.isComposing = isComposing;
+        }
+
+        /**
+         * 按分段边界切分组字串；边界非法或缺失时退化为整串单段。
+         * Splits the composition by clause boundaries; falls back to one block.
+         */
+        private static String[] splitBlocks(String composition, int[] clauses) {
+            int len = composition.length();
+            if (clauses != null && clauses.length >= 2) {
+                java.util.List<String> list = new java.util.ArrayList<String>(clauses.length - 1);
+                boolean valid = true;
+                for (int i = 0; i < clauses.length - 1 && valid; i++) {
+                    int start = clauses[i];
+                    int end = clauses[i + 1];
+                    if (start < 0 || end < start || end > len) {
+                        valid = false;
+                    } else if (end > start) {
+                        list.add(composition.substring(start, end));
+                    }
+                }
+                if (valid && !list.isEmpty()) {
+                    return list.toArray(new String[0]);
+                }
+            }
+            return new String[] { composition };
         }
 
         @Override
         public String toString() {
-            return String.format("CompositionInfo{reading='%s', composition='%s', composing=%s}",
-                    reading, composition, isComposing);
+            return String.format(
+                    "CompositionInfo{composition='%s', caret=%d, blocks=%d, focused=%d, composing=%s}",
+                    composition, caretPosition, blocks.length, focusedBlock, isComposing);
         }
     }
 
