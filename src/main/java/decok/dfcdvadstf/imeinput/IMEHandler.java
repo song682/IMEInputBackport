@@ -3,6 +3,8 @@ package decok.dfcdvadstf.imeinput;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
+import decok.dfcdvadstf.imeinput.gui.IMEOverlay;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
@@ -41,6 +43,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     /** 当前组字快照（对齐 PreeditEvent 形态； null 表示未在组字） */
     private volatile IMEBridge.CompositionInfo compositionInfo = null;
 
+    /** 当前候选页快照（自绘候选窗消费；null 表示候选窗已关闭） */
+    private volatile CandidatePage candidatePage = null;
+
     /** Mixin 渲染时上报的光标 GUI 坐标（组字预览插入点）；-1 表示尚未上报 */
     private volatile int caretGuiX = -1;
     /** 光标底部的 GUI Y 坐标（候选窗紧贴其下方） */
@@ -59,15 +64,41 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
+    //  数据结构
+    // ============================================================
+
+    /**
+     * 候选页快照：本地层已按 {@code dwPageStart}/{@code dwPageSize} 切好的当前可见页。
+     * 不可变，回调线程构造后整体发布，渲染线程只读。
+     * Candidate page snapshot: the visible page pre-sliced by the native layer.
+     * Immutable — published as a whole from the callback thread, read-only for rendering.
+     */
+    public static final class CandidatePage {
+        /** 页内候选词文本（顺序即页内序号） / Page candidate texts, in page order */
+        public final String[] texts;
+        /** 页内选中项索引；-1 表示无 / Page-relative selection index, -1 = none */
+        public final int selectedIndex;
+
+        CandidatePage(String[] texts, int selectedIndex) {
+            this.texts = texts;
+            this.selectedIndex = selectedIndex;
+        }
+    }
+
+    // ============================================================
     //  生命周期
     // ============================================================
 
     /**
-     * 在客户端初始化时调用：注册 tick 事件监听。
+     * 在客户端初始化时调用：注册 tick 事件监听，并把自绘组词窗 Overlay
+     * 挂入 CatFrame 的 OverlayManager（渲染由 CatFrame 的 DrawScreenEvent 驱动）。
      * 真正的窗口子类化延迟到第一次 tick（此时 Display 已创建）。
+     * Registers tick listener and hooks the self-drawn composition overlay into
+     * CatFrame's OverlayManager (rendering driven by CatFrame's DrawScreenEvent bridge).
      */
     public static void init() {
         FMLCommonHandler.instance().bus().register(INSTANCE);
+        OverlayManager.INSTANCE.register(IMEOverlay.INSTANCE);
     }
 
     /**
@@ -127,6 +158,64 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
+    //  自绘组词窗（IMEOverlay）查询接口
+    //  Query surface for the self-drawn composition overlay
+    // ============================================================
+
+    /**
+     * IME 当前是否处于激活状态（有聚焦文本框且已向本地层开启 IME）。
+     * Whether the IME is currently enabled for the focused text field.
+     *
+     * @return true 表示 IME 已启用
+     */
+    public static boolean isImeActive() {
+        return INSTANCE.lastImeEnabled;
+    }
+
+    /**
+     * 当前候选页快照（本地层已按可见页切片）。
+     * Current candidate page snapshot (pre-sliced by the native layer).
+     *
+     * @return 候选页；候选窗关闭或无候选时返回 null
+     */
+    public static CandidatePage getCandidatePage() {
+        CandidatePage page = INSTANCE.candidatePage;
+        return page != null && page.texts.length > 0 ? page : null;
+    }
+
+    /**
+     * 自绘组词窗的锚点 X（GUI 逻辑坐标）：优先用 Mixin 上报的光标位置，
+     * 尚未上报时回退到聚焦文本框左下角。
+     * Overlay anchor X in GUI coordinates: the reported caret position,
+     * falling back to the focused field's bottom-left corner.
+     *
+     * @return 锚点 GUI X；无可用锚点时返回 0
+     */
+    public static int getOverlayAnchorX() {
+        int x = INSTANCE.caretGuiX;
+        if (x >= 0) {
+            return x;
+        }
+        GuiTextField field = focusedField.get();
+        return field != null ? field.xPosition : 0;
+    }
+
+    /**
+     * 自绘组词窗的锚点 Y（GUI 逻辑坐标，光标下沿）；回退同上。
+     * Overlay anchor Y in GUI coordinates (below the caret); same fallback.
+     *
+     * @return 锚点 GUI Y；无可用锚点时返回 0
+     */
+    public static int getOverlayAnchorY() {
+        int y = INSTANCE.caretGuiY;
+        if (y >= 0) {
+            return y;
+        }
+        GuiTextField field = focusedField.get();
+        return field != null ? field.yPosition + field.height + 2 : 0;
+    }
+
+    // ============================================================
     //  客户端 tick：安装 / IME 开关 / 消费提交
     // ============================================================
 
@@ -162,6 +251,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             // 光标上报失效，回退到文本框坐标兼底 / Invalidate stale caret report
             caretGuiX = -1;
             caretGuiY = -1;
+            // 候选页同步作废，避免自绘窗残留 / Drop stale candidate page
+            candidatePage = null;
         }
     }
 
@@ -258,11 +349,27 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     @Override
     public void onCompositionUpdate(IMEBridge.CompositionInfo info) {
         this.compositionInfo = info;
+        // 组字结束时候选页一并作废（个别输入法不发 IMN_CLOSECANDIDATE）
+        // Drop the candidate page when composition ends (some IMEs skip IMN_CLOSECANDIDATE)
+        if (info == null || !info.isComposing) {
+            this.candidatePage = null;
+        }
     }
 
     @Override
-    public void onCandidatesUpdate(IMEBridge.Candidate[] candidates) {
-        // 采用系统原生候选窗，暂不自绘；此处保留以便后续切换为自绘模式。
+    public void onCandidatesUpdate(IMEBridge.Candidate[] candidates, int selectedIndex) {
+        // 窗口模式保留系统原生候选窗；快照供独占全屏下的自绘组词窗（IMEOverlay）消费。
+        // Windowed mode keeps the OS candidate window; this snapshot feeds the
+        // self-drawn composition overlay (IMEOverlay) in exclusive fullscreen.
+        if (candidates == null || candidates.length == 0) {
+            this.candidatePage = null;
+            return;
+        }
+        String[] texts = new String[candidates.length];
+        for (int i = 0; i < candidates.length; i++) {
+            texts[i] = candidates[i] != null && candidates[i].text != null ? candidates[i].text : "";
+        }
+        this.candidatePage = new CandidatePage(texts, selectedIndex);
     }
 
     @Override

@@ -6,7 +6,10 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-@Mod(modid = Tags.MODID, name = Tags.NAME, version = Tags.VERSION, useMetadata = true)
+// CatFrame is a hard dependency: the self-drawn IME composition overlay plugs into its Overlay system.
+// CatFrame 为硬前置：自绘 IME 组词窗接入其 Overlay 体系。
+@Mod(modid = Tags.MODID, name = Tags.NAME, version = Tags.VERSION, useMetadata = true,
+        dependencies = "required-after:catframe")
 public class IMEInoutBackport {
     public static Logger logger = LogManager.getLogger(Tags.NAME);
 

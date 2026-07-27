@@ -163,9 +163,15 @@ public class IMEBridge {
 
     /**
      * IME 候选词。
+     * <p>
+     * 自绘候选窗升级后，本地层仅上报当前可见页（{@code dwPageStart} /
+     * {@code dwPageSize} 切片），因此 {@link #index} 为页内相对索引（从 0 起）。
+     * Since the self-drawn upgrade the native layer reports only the visible page
+     * (sliced by {@code dwPageStart}/{@code dwPageSize}), so {@link #index} is
+     * page-relative (0-based).
      */
     public static class Candidate {
-        /** 候选词在列表中的索引 */
+        /** 候选词在当前页内的索引 */
         public final int index;
         /** 候选词文本 */
         public final String text;
@@ -278,10 +284,15 @@ public class IMEBridge {
         void onCompositionUpdate(CompositionInfo info);
 
         /**
-         * 候选词列表更新（自绘候选窗时使用）。
-         * @param candidates 候选词数组，可能为空数组
+         * 候选词列表更新（自绘候选窗使用）。
+         * 本地层已按当前可见页切片，候选项索引为页内相对索引。
+         * Candidate list update (for the self-drawn window); the native layer
+         * pre-slices the visible page, indices are page-relative.
+         *
+         * @param candidates    当前页候选词数组，可能为空数组
+         * @param selectedIndex 页内选中项索引；-1 表示无选中项 / page-relative selection, -1 = none
          */
-        void onCandidatesUpdate(Candidate[] candidates);
+        void onCandidatesUpdate(Candidate[] candidates, int selectedIndex);
 
         /**
          * IME 提交确认文字。
