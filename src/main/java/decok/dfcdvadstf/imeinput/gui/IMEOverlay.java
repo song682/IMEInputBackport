@@ -10,7 +10,6 @@ import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.ScaledResolution;
 import org.jnilib.imeinput.IMEBridge;
-import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.GL11;
 
 /**
@@ -19,24 +18,22 @@ import org.lwjgl.opengl.GL11;
  * 仿 Windows 原生组词窗的两框堆叠结构，PreEdit 框与组词候选框上下相接、一起呈现：
  * <pre>
  * ┌──────────────────────────┐
- * │ 组字串（分段 + 聚焦段 + 光标）│  ← PreEdit 框（任何模式都自绘）
+ * │ 组字串（分段 + 聚焦段 + 光标）│  ← PreEdit 框（本 Overlay 自绘，任何模式）
  * ├──────────────────────────┤
- * │ 1. 候选  2. 候选  3. 候选   │  ← 组词候选框（Windows 的那个框）
+ * │ 1. 候选  2. 候选  3. 候选   │  ← 组词候选框（微软输入法自己画）
  * └──────────────────────────┘
  * </pre>
- * 两个框在任何显示模式下都要一起出现，区别只在候选框由谁来画：
- * <ul>
- *   <li><b>窗口化</b>：候选框就是系统原生组词窗——{@link IMEHandler} 把系统窗
- *       下压到 PreEdit 框下沿（CFS_POINT），两框上下相接；自绘候选会双重显示，故不画。</li>
- *   <li><b>独占全屏</b>：系统窗无法覆盖游戏画面，候选框改由本 Overlay 自绘
- *       （native 已按可见页切片，选中项高亮），与 PreEdit 框一起渲染。</li>
- * </ul>
+ * 候选框<b>一定且必须由微软输入法来画</b>（不分窗口化/全屏）——{@link IMEHandler}
+ * 用 CFS_POINT 把系统组词窗下压到 PreEdit 框下沿，两框上下相接。
+ * 本类内的自绘候选框代码<b>保留但默认不启用</b>（{@link #selfDrawCandidates}），留作后用。
+ * <p>
  * IME self-drawn composition overlay (plugged into the CatFrame Overlay system).
  * Mirrors the native Windows composition UI as two stacked boxes: the <b>PreEdit
- * box</b> is always self-drawn while composing, in windowed and fullscreen mode alike.
- * The <b>candidate box</b> below it is the OS composition window in windowed mode
- * (pushed right below the PreEdit box by {@link IMEHandler}), and is self-drawn only
- * in <b>exclusive fullscreen</b>, where the OS window cannot appear on top of the game.
+ * box</b> is self-drawn whenever composing, in windowed and fullscreen mode alike.
+ * The <b>candidate box</b> below it is always drawn by the Microsoft IME itself —
+ * {@link IMEHandler} pushes the OS composition window (CFS_POINT) right below the
+ * PreEdit box so the two stack together. The self-drawn candidate box code is kept
+ * but disabled by default ({@link #selfDrawCandidates}), reserved for future use.
  * <p>
  * 渲染驱动完全复用 CatFrame 的 {@code ClientOverlayHandler}
  * （{@code DrawScreenEvent.Post} → {@code OverlayManager.renderAll}），
@@ -48,6 +45,14 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
 
     /** 单例：由 {@link IMEHandler#init()} 注册到 OverlayManager / Singleton, registered once */
     public static final IMEOverlay INSTANCE = new IMEOverlay();
+
+    /**
+     * 自绘候选框开关：默认关闭——候选框一定且必须由微软输入法来画，
+     * 自绘代码仅作保留，留待日后启用。
+     * Self-drawn candidate box switch: off by default — the candidate box is
+     * always drawn by the Microsoft IME; the code is kept for future use.
+     */
+    public static volatile boolean selfDrawCandidates = false;
 
     // ──── 视觉常量 / Visual constants ────
 
@@ -131,11 +136,11 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     }
 
     /**
-     * 显示门控：IME 激活 + 有组字（任何模式）或有候选（仅独占全屏）。
+     * 显示门控：IME 激活 + 有组字（任何模式）；自绘候选仅在开关启用时参与。
      * 通过时顺带重算浮窗尺寸——OverlayManager 在本调用之后立刻用
      * {@code getWidth()/getHeight()} 解析锚点，此处是唯一先于取值的稳定钩子。
-     * Visibility gate: IME active + composing (any display mode) or has
-     * candidates (exclusive fullscreen only).
+     * Visibility gate: IME active + composing (any display mode); the self-drawn
+     * candidates only participate when the switch is on.
      * Also relayouts here, since OverlayManager reads width/height right after
      * this call — the only stable hook that runs before those getters.
      */
@@ -154,13 +159,13 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     }
 
     /**
-     * 当前应自绘的候选页：仅独占全屏时返回快照，窗口化下返回 null
-     * （系统候选窗自行弹出，自绘会双重显示）。
-     * The candidate page to self-draw: only in exclusive fullscreen; in windowed
-     * mode the OS candidate window shows itself, so we return null here.
+     * 当前应自绘的候选页：仅开关启用时返回快照，默认恒为 null
+     * （候选框由微软输入法自己画，本 Overlay 不插手）。
+     * The candidate page to self-draw: only when the switch is enabled; null by
+     * default — the Microsoft IME draws the candidate box itself.
      */
     private static IMEHandler.CandidatePage visibleCandidatePage() {
-        return Display.isFullscreen() ? IMEHandler.getCandidatePage() : null;
+        return selfDrawCandidates ? IMEHandler.getCandidatePage() : null;
     }
 
     // ──── 布局 / Layout ────
@@ -233,12 +238,12 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     // ──── 渲染 / Rendering ────
 
     /**
-     * 绘制两框堆叠的组词窗：PreEdit 框（分段高亮 + 光标）在上，
-     * 候选框（仅独占全屏，选中项高亮）紧贴其下，各自带边框与背景。
+     * 绘制两框堆叠的组词窗：PreEdit 框（分段高亮 + 光标）在上；
+     * 自绘候选框（默认关闭，选中项高亮）紧贴其下，各自带边框与背景。
      * 坐标已由 OverlayManager 依锚点与 offset 解析并临时写入 x/y。
      * Draws the two stacked boxes: PreEdit box (block highlight + caret) on top,
-     * candidate box (fullscreen only, selection highlight) right below, each with
-     * its own border and background. Position was already resolved by OverlayManager.
+     * self-drawn candidate box (off by default, selection highlight) right below,
+     * each with its own border and background. Position was resolved by OverlayManager.
      */
     @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
@@ -284,8 +289,8 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
             boxY += preeditBoxH + BOX_GAP;
         }
 
-        // ── 候选框（仅独占全屏）：横向排布，选中项浅底深字高亮 ──
-        // ── Candidate box (fullscreen only): horizontal items, selection dark-on-light ──
+        // ── 自绘候选框（默认关闭，留作后用）：横向排布，选中项浅底深字高亮 ──
+        // ── Self-drawn candidate box (off by default, kept for future use) ──
         if (page != null && candBoxH > 0) {
             drawBox(x, boxY, candBoxW, candBoxH);
             int px = x + 1 + PADDING;

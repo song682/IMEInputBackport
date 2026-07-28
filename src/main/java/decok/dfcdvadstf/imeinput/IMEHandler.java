@@ -367,9 +367,10 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     @Override
     public void onCandidatesUpdate(IMEBridge.Candidate[] candidates, int selectedIndex) {
-        // 窗口模式保留系统原生候选窗；快照供独占全屏下的自绘组词窗（IMEOverlay）消费。
-        // Windowed mode keeps the OS candidate window; this snapshot feeds the
-        // self-drawn composition overlay (IMEOverlay) in exclusive fullscreen.
+        // 候选框由微软输入法自己画；快照仅供保留的自绘候选框
+        // （IMEOverlay，默认不启用）日后消费。
+        // The Microsoft IME draws the candidate box itself; this snapshot only
+        // feeds the reserved self-drawn candidate box (IMEOverlay, off by default).
         if (candidates == null || candidates.length == 0) {
             this.candidatePage = null;
             return;
