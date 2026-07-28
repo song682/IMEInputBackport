@@ -19,7 +19,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * <p>
  * 职责：
  * <ol>
- *   <li>获取 LWJGL 游戏窗口句柄（反射 {@code WindowsDisplay.current_display.hwnd}）并子类化</li>
+ *   <li>获取 LWJGL 游戏窗口句柄（反射 {@code WindowsDisplay.current_display.hwnd}）
+ *       并安装 IME 后端（AUTO 先试 TSF，失败降级 IMM32 子类化）</li>
  *   <li>作为 {@link IMEBridge.IMECallback} 接收组字/提交/候选回调</li>
  *   <li>在客户端 tick 中：按聚焦文本框开关 IME、定位候选窗、消费已提交文字</li>
  * </ol>
@@ -59,6 +60,13 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     private boolean lastImeEnabled = false;
     /** 是否已尝试过（失败）获取句柄，避免每 tick 刷屏日志 */
     private boolean handleLookupFailedLogged = false;
+
+    /**
+     * 配置的后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
+     * {@code BACKEND_IMM32}），由 {@link #init(int)} 从 Forge 配置传入。
+     * Configured backend mode, passed in from the Forge config via {@link #init(int)}.
+     */
+    private static int backendMode = IMEBridge.BACKEND_AUTO;
 
     /**
      * 窗口改动侦测基准：上次观察到的全屏标志与窗口尺寸。
@@ -111,13 +119,17 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     // ============================================================
 
     /**
-     * 在客户端初始化时调用：注册 tick 事件监听，并把自绘组词窗 Overlay
+     * 在客户端初始化时调用：记录后端模式、注册 tick 事件监听，并把自绘组词窗 Overlay
      * 挂入 CatFrame 的 OverlayManager（渲染由 CatFrame 的 DrawScreenEvent 驱动）。
-     * 真正的窗口子类化延迟到第一次 tick（此时 Display 已创建）。
-     * Registers tick listener and hooks the self-drawn composition overlay into
-     * CatFrame's OverlayManager (rendering driven by CatFrame's DrawScreenEvent bridge).
+     * 真正的后端安装延迟到第一次 tick（此时 Display 已创建）。
+     * Records the backend mode, registers the tick listener and hooks the
+     * self-drawn composition overlay into CatFrame's OverlayManager; the actual
+     * backend install is deferred to the first tick (Display exists by then).
+     *
+     * @param mode 后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}）
      */
-    public static void init() {
+    public static void init(int mode) {
+        backendMode = mode;
         FMLCommonHandler.instance().bus().register(INSTANCE);
         OverlayManager.INSTANCE.register(IMEOverlay.INSTANCE);
     }
@@ -264,7 +276,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         boolean wantEnable = screen != null && field != null && field.isFocused();
 
         if (wantEnable != lastImeEnabled) {
-            IMEBridge.setImeEnabled(hwnd, wantEnable);
+            IMEBridge.setEnabled(hwnd, wantEnable);
             lastImeEnabled = wantEnable;
         }
 
@@ -282,7 +294,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
     }
 
-    /** 延迟安装：获取句柄、子类化、注册回调 */
+    /** 延迟安装：获取句柄、安装后端（TSF 或 IMM32）、注册回调 */
     private void ensureInstalled() {
         if (installed) {
             return;
@@ -294,9 +306,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             return;
         }
         IMEBridge.setCallback(this);
-        IMEBridge.subclassWindow(hwnd);
+        int backend = IMEBridge.install(hwnd, backendMode);
         // 初始状态禁用 IME，待聚焦文本框时再启用
-        IMEBridge.setImeEnabled(hwnd, false);
+        IMEBridge.setEnabled(hwnd, false);
         lastImeEnabled = false;
         installed = true;
         // 初始化窗口改动侦测基准 / Seed the window-change detection baseline
@@ -304,7 +316,26 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         lastFullscreen = mc.isFullScreen();
         lastDisplayW = mc.displayWidth;
         lastDisplayH = mc.displayHeight;
-        IMEInoutBackport.logger.info("[IME] Subclassed game window hwnd=" + hwnd);
+        logBackendResult(backend, "Installed");
+    }
+
+    /**
+     * 输出后端安装结果日志；若 AUTO/TSF 模式最终落在 IMM32，明确提示发生了降级。
+     * Logs the backend install result; explicitly notes the downgrade when an
+     * AUTO/TSF request ended up on the IMM32 path.
+     *
+     * @param backend 实际激活的后端
+     * @param action  日志动词（Installed / Re-installed）
+     */
+    private void logBackendResult(int backend, String action) {
+        String name = IMEBridge.backendName(backend);
+        if (backend == IMEBridge.BACKEND_IMM32 && backendMode != IMEBridge.BACKEND_IMM32) {
+            IMEInoutBackport.logger.info("[IME] " + action + " backend=" + name
+                    + " (TSF unavailable, fell back from "
+                    + IMEBridge.backendName(backendMode) + ") hwnd=" + hwnd);
+        } else {
+            IMEInoutBackport.logger.info("[IME] " + action + " backend=" + name + " hwnd=" + hwnd);
+        }
     }
 
     /**
@@ -332,14 +363,16 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     /**
-     * 句柄复检与重挂：解析当前句柄，与已安装句柄不一致时重新安装子类化：
-     * 解除旧句柄的子类化（清空 native 侧状态，对已销毁的窗口无害）→
-     * 子类化新句柄 → 重置 IME 使能状态强制下个 tick 重新同步 → 作废残留快照。
-     * 若不处理，旧子类化随窗口一起死掉，组字/提交/候选回调全断直到重启游戏。
-     * Hwnd revalidation and rehook: resolves the current handle and re-subclasses
-     * when it differs from the installed one. Unsubclass the old handle (clears
-     * native state, harmless on a destroyed window) → subclass the new one →
-     * reset the IME-enabled state so the next tick resyncs → drop stale
+     * 句柄复检与重挂：解析当前句柄，与已安装句柄不一致时重新安装后端：
+     * 卸载旧句柄上的后端（清空 native 侧状态，对已销毁的窗口无害）→
+     * 在新句柄上按配置模式重新安装（TSF 重挂 AssociateFocus 同样走这里）→
+     * 重置 IME 使能状态强制下个 tick 重新同步 → 作废残留快照。
+     * 若不处理，旧后端随窗口一起死掉，组字/提交/候选回调全断直到重启游戏。
+     * Hwnd revalidation and rehook: resolves the current handle and re-installs
+     * the backend when it differs from the installed one. Uninstall on the old
+     * handle (clears native state, harmless on a destroyed window) → re-install
+     * per the configured mode (the TSF AssociateFocus re-attach takes the same
+     * path) → reset the IME-enabled state so the next tick resyncs → drop stale
      * snapshots. Without this, all IME callbacks stay dead until the game
      * restarts.
      *
@@ -356,12 +389,13 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             // 窗口没重建（普通缩放/最大化），无需重挂 / Not recreated, nothing to do
             return true;
         }
-        IMEBridge.unsubclassWindow(hwnd);
-        IMEBridge.subclassWindow(current);
-        IMEBridge.setImeEnabled(current, false);
-        IMEInoutBackport.logger.info("[IME] Game window recreated, re-subclassed hwnd "
+        IMEBridge.uninstall(hwnd);
+        int backend = IMEBridge.install(current, backendMode);
+        IMEBridge.setEnabled(current, false);
+        IMEInoutBackport.logger.info("[IME] Game window recreated, rehooked hwnd "
                 + hwnd + " -> " + current);
         hwnd = current;
+        logBackendResult(backend, "Re-installed");
         lastImeEnabled = false;
         // 旧窗口的组字/候选快照已无意义 / Stale snapshots from the old window
         compositionInfo = null;
@@ -410,7 +444,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
         int px = (int) Math.round(guiX * scaleX);
         int py = (int) Math.round(guiY * scaleY);
-        IMEBridge.setCandidatePos(hwnd, px, py);
+        IMEBridge.setCaretPos(hwnd, px, py);
     }
 
     // ============================================================
@@ -460,9 +494,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     @Override
     public void onCandidatesUpdate(IMEBridge.Candidate[] candidates, int selectedIndex) {
-        // 候选框由微软输入法自己画；快照仅供保留的自绘候选框
+        // 候选框由当前活动输入法自己画；快照仅供保留的自绘候选框
         // （IMEOverlay，默认不启用）日后消费。
-        // The Microsoft IME draws the candidate box itself; this snapshot only
+        // The active IME draws the candidate box itself; this snapshot only
         // feeds the reserved self-drawn candidate box (IMEOverlay, off by default).
         if (candidates == null || candidates.length == 0) {
             this.candidatePage = null;

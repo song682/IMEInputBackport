@@ -103,6 +103,157 @@ public class IMEBridge {
     }
 
     // ============================================================
+    //  后端编排（AUTO / TSF / IMM32）
+    //  Backend orchestration (AUTO / TSF / IMM32)
+    // ============================================================
+
+    /** 自动：先试 TSF，失败降级 IMM32 / Auto: try TSF first, fall back to IMM32 */
+    public static final int BACKEND_AUTO = 0;
+    /** 强制 TSF 后端 / Force the TSF backend */
+    public static final int BACKEND_TSF = 1;
+    /** 强制 IMM32 子类化后端 / Force the IMM32 subclass backend */
+    public static final int BACKEND_IMM32 = 2;
+    /** 未安装 / Not installed */
+    public static final int BACKEND_NONE = -1;
+
+    /** 当前激活后端；仅在游戏主线程读写 / Active backend; main-thread only */
+    private static int activeBackend = BACKEND_NONE;
+
+    /**
+     * 按配置模式在游戏窗口上安装 IME 后端。
+     * AUTO / TSF 先试 TSF（安装链任一环节失败即本地层整体回滚）；
+     * TSF 失败或模式为 IMM32 时落到现有子类化路径。重复调用无副作用。
+     * Installs the IME backend per configured mode: AUTO/TSF try TSF first
+     * (native side rolls back fully on any failure); otherwise falls back to
+     * the existing IMM32 subclass path. Idempotent.
+     *
+     * @param hwnd 窗口句柄（{@code HWND} 的整数值）
+     * @param mode {@link #BACKEND_AUTO} / {@link #BACKEND_TSF} / {@link #BACKEND_IMM32}
+     * @return 实际激活的后端（{@link #BACKEND_TSF} 或 {@link #BACKEND_IMM32}），供日志输出
+     */
+    public static int install(long hwnd, int mode) {
+        if (activeBackend != BACKEND_NONE) {
+            return activeBackend;
+        }
+        if (mode != BACKEND_IMM32 && nativeTsfInstall(hwnd)) {
+            activeBackend = BACKEND_TSF;
+        } else {
+            // TSF 失败或强制 IMM32：走现有子类化路径 / TSF failed or forced IMM32
+            subclassWindow(hwnd);
+            activeBackend = BACKEND_IMM32;
+        }
+        return activeBackend;
+    }
+
+    /**
+     * 卸载当前激活的后端（窗口重建/重挂前调用）。未安装时无副作用。
+     * Uninstalls the active backend (called before window rebuild/rehook).
+     *
+     * @param hwnd 窗口句柄（IMM32 路径需要；TSF 路径忽略）
+     */
+    public static void uninstall(long hwnd) {
+        if (activeBackend == BACKEND_TSF) {
+            nativeTsfUninstall();
+        } else if (activeBackend == BACKEND_IMM32) {
+            unsubclassWindow(hwnd);
+        }
+        activeBackend = BACKEND_NONE;
+    }
+
+    /**
+     * 按激活后端分发的 IME 使能开关。
+     * TSF → {@link #nativeTsfSetEnabled}（AssociateFocus 切换真实/空文档）；
+     * IMM32 → 现有 {@link #setImeEnabled}。
+     * Backend-dispatched IME enable switch.
+     *
+     * @param hwnd    窗口句柄
+     * @param enabled true 启用中日韩输入，false 强制英文
+     */
+    public static void setEnabled(long hwnd, boolean enabled) {
+        if (activeBackend == BACKEND_TSF) {
+            nativeTsfSetEnabled(enabled);
+        } else if (activeBackend == BACKEND_IMM32) {
+            setImeEnabled(hwnd, enabled);
+        }
+    }
+
+    /**
+     * 按激活后端分发的候选/组字窗定位（窗口客户区像素坐标）。
+     * TSF → {@link #nativeTsfSetCaretPos}（由 {@code GetTextExt} 交给输入法）；
+     * IMM32 → 现有 {@link #setCandidatePos}。
+     * Backend-dispatched candidate/composition window positioning.
+     *
+     * @param hwnd 窗口句柄
+     * @param x    客户区 X（像素）
+     * @param y    客户区 Y（像素，通常为光标底部）
+     */
+    public static void setCaretPos(long hwnd, int x, int y) {
+        if (activeBackend == BACKEND_TSF) {
+            nativeTsfSetCaretPos(x, y);
+        } else if (activeBackend == BACKEND_IMM32) {
+            setCandidatePos(hwnd, x, y);
+        }
+    }
+
+    /**
+     * 当前激活的后端。
+     * @return {@link #BACKEND_TSF} / {@link #BACKEND_IMM32} / {@link #BACKEND_NONE}
+     */
+    public static int getActiveBackend() {
+        return activeBackend;
+    }
+
+    /**
+     * 后端名称（日志用）。 / Backend display name for logging.
+     *
+     * @param backend 后端常量
+     * @return 可读名称
+     */
+    public static String backendName(int backend) {
+        switch (backend) {
+            case BACKEND_AUTO:  return "AUTO";
+            case BACKEND_TSF:   return "TSF";
+            case BACKEND_IMM32: return "IMM32";
+            default:            return "NONE";
+        }
+    }
+
+    // ============================================================
+    //  TSF 后端 native（由 tsf_bridge.cpp 实现）
+    //  TSF backend natives (implemented in tsf_bridge.cpp)
+    // ============================================================
+
+    /**
+     * 在窗口上安装 TSF 后端。安装链任一步失败即整体回滚并返回 false，
+     * 不抛异常，供 {@link #install} 静默降级到 IMM32。
+     * Installs the TSF backend; full rollback + false on any failure.
+     *
+     * @param hwnd 窗口句柄
+     * @return 安装成功返回 true
+     */
+    private static native boolean nativeTsfInstall(long hwnd);
+
+    /** 卸载 TSF 后端并释放全部 COM 状态。 / Uninstalls TSF and releases COM state. */
+    private static native void nativeTsfUninstall();
+
+    /**
+     * TSF 路径的 IME 使能开关（AssociateFocus 切换真实/空文档管理器）。
+     * TSF-path IME enable switch (AssociateFocus real/empty document manager).
+     *
+     * @param enabled true 允许组字，false 禁用输入法
+     */
+    private static native void nativeTsfSetEnabled(boolean enabled);
+
+    /**
+     * 上报光标位置（窗口客户区像素），供输入法经 {@code GetTextExt} 定位候选窗。
+     * Reports the caret position consumed by {@code GetTextExt}.
+     *
+     * @param x 客户区 X（像素）
+     * @param y 客户区 Y（像素）
+     */
+    private static native void nativeTsfSetCaretPos(int x, int y);
+
+    // ============================================================
     //  窗口子类化 / IME 使能
     // ============================================================
 
