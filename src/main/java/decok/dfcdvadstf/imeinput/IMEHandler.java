@@ -60,6 +60,22 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     /** 是否已尝试过（失败）获取句柄，避免每 tick 刷屏日志 */
     private boolean handleLookupFailedLogged = false;
 
+    /**
+     * 句柄复检节流计数器：每 {@link #HWND_CHECK_INTERVAL} 个 tick 复检一次。
+     * Throttle counter for the hwnd revalidation, once per HWND_CHECK_INTERVAL ticks.
+     */
+    private int hwndCheckCooldown = 0;
+
+    /**
+     * 句柄复检间隔（tick）：LWJGL2 在切换全屏/无边框时会销毁重建窗口，
+     * 句柄随之失效；每秒复检一次在开销与恢复延迟间取平衡（反射开销低，
+     * 但没必要每 tick 都做）。
+     * Revalidation interval in ticks: LWJGL2 destroys and recreates the window on
+     * fullscreen/borderless switches, invalidating the hwnd; once per second
+     * balances overhead against recovery latency.
+     */
+    private static final int HWND_CHECK_INTERVAL = 20;
+
     private IMEHandler() {
     }
 
@@ -229,6 +245,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         if (!installed) {
             return;
         }
+        // 窗口重建自愈：句柄变更时重新子类化（F11 全屏切换/无边框模组重建窗口等）
+        // Window-recreation self-healing: re-subclass when the hwnd changes
+        maybeRehookWindow();
 
         Minecraft mc = Minecraft.getMinecraft();
         GuiScreen screen = mc.currentScreen;
@@ -274,6 +293,41 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         lastImeEnabled = false;
         installed = true;
         IMEInoutBackport.logger.info("[IME] Subclassed game window hwnd=" + hwnd);
+    }
+
+    /**
+     * 句柄变更自愈：周期性复检当前 LWJGL 窗口句柄，与已安装句柄不一致时
+     * （LWJGL2 切换全屏/无边框会销毁重建窗口）重新安装子类化：
+     * 解除旧句柄的子类化（清空 native 侧状态，对已销毁的窗口无害）→
+     * 子类化新句柄 → 重置 IME 使能状态强制下个 tick 重新同步 → 作废残留快照。
+     * 若不处理，旧子类化随窗口一起死掉，组字/提交/候选回调全断直到重启游戏。
+     * Hwnd-change self-healing: periodically revalidates the LWJGL window handle
+     * and re-subclasses when it changed (LWJGL2 destroys/recreates the window on
+     * fullscreen or borderless switches). Unsubclass the old handle (clears native
+     * state, harmless on a destroyed window) → subclass the new one → reset the
+     * IME-enabled state so the next tick resyncs → drop stale snapshots. Without
+     * this, all IME callbacks stay dead until the game restarts.
+     */
+    private void maybeRehookWindow() {
+        if (++hwndCheckCooldown < HWND_CHECK_INTERVAL) {
+            return;
+        }
+        hwndCheckCooldown = 0;
+        long current = resolveHwnd();
+        // 切换中途可能短暂拿到 0，不动；下次复检再试 / Mid-switch may yield 0, retry later
+        if (current == 0L || current == hwnd) {
+            return;
+        }
+        IMEBridge.unsubclassWindow(hwnd);
+        IMEBridge.subclassWindow(current);
+        IMEBridge.setImeEnabled(current, false);
+        IMEInoutBackport.logger.info("[IME] Game window recreated, re-subclassed hwnd "
+                + hwnd + " -> " + current);
+        hwnd = current;
+        lastImeEnabled = false;
+        // 旧窗口的组字/候选快照已无意义 / Stale snapshots from the old window
+        compositionInfo = null;
+        candidatePage = null;
     }
 
     /** 消费已提交文字，写入聚焦文本框 */
