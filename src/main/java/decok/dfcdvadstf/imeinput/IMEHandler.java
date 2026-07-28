@@ -61,20 +61,25 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     private boolean handleLookupFailedLogged = false;
 
     /**
-     * 句柄复检节流计数器：每 {@link #HWND_CHECK_INTERVAL} 个 tick 复检一次。
-     * Throttle counter for the hwnd revalidation, once per HWND_CHECK_INTERVAL ticks.
+     * 窗口改动侦测基准：上次观察到的全屏标志与窗口尺寸。
+     * 三者任一变化才触发句柄复检（窗口重建必伴随其中至少一项变化），
+     * 不做周期轮询——玩家一局游戏最多切换那么几次。
+     * Window-change detection baseline: last observed fullscreen flag and display
+     * size. Only a change in any of them triggers an hwnd revalidation (window
+     * recreation always comes with at least one of these changing); no periodic
+     * polling since players toggle the window a handful of times per session.
      */
-    private int hwndCheckCooldown = 0;
+    private boolean lastFullscreen = false;
+    private int lastDisplayW = -1;
+    private int lastDisplayH = -1;
 
     /**
-     * 句柄复检间隔（tick）：LWJGL2 在切换全屏/无边框时会销毁重建窗口，
-     * 句柄随之失效；每秒复检一次在开销与恢复延迟间取平衡（反射开销低，
-     * 但没必要每 tick 都做）。
-     * Revalidation interval in ticks: LWJGL2 destroys and recreates the window on
-     * fullscreen/borderless switches, invalidating the hwnd; once per second
-     * balances overhead against recovery latency.
+     * 待完成的句柄复检：切换中途 resolveHwnd() 可能短暂返回 0，
+     * 挂起此旗标在后续 tick 重试直到拿到有效句柄。
+     * Pending hwnd recheck: resolveHwnd() may briefly return 0 mid-switch;
+     * this flag keeps retrying on later ticks until a valid handle shows up.
      */
-    private static final int HWND_CHECK_INTERVAL = 20;
+    private boolean rehookPending = false;
 
     private IMEHandler() {
     }
@@ -245,11 +250,13 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         if (!installed) {
             return;
         }
-        // 窗口重建自愈：句柄变更时重新子类化（F11 全屏切换/无边框模组重建窗口等）
-        // Window-recreation self-healing: re-subclass when the hwnd changes
-        maybeRehookWindow();
 
         Minecraft mc = Minecraft.getMinecraft();
+
+        // 窗口重建自愈：仅在侦测到窗口改动（全屏切换/尺寸变化）时才复检句柄
+        // Window-recreation self-healing: revalidate hwnd only on observed window changes
+        detectWindowChange(mc);
+
         GuiScreen screen = mc.currentScreen;
         GuiTextField field = focusedField.get();
 
@@ -292,31 +299,62 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         IMEBridge.setImeEnabled(hwnd, false);
         lastImeEnabled = false;
         installed = true;
+        // 初始化窗口改动侦测基准 / Seed the window-change detection baseline
+        Minecraft mc = Minecraft.getMinecraft();
+        lastFullscreen = mc.isFullScreen();
+        lastDisplayW = mc.displayWidth;
+        lastDisplayH = mc.displayHeight;
         IMEInoutBackport.logger.info("[IME] Subclassed game window hwnd=" + hwnd);
     }
 
     /**
-     * 句柄变更自愈：周期性复检当前 LWJGL 窗口句柄，与已安装句柄不一致时
-     * （LWJGL2 切换全屏/无边框会销毁重建窗口）重新安装子类化：
+     * 窗口改动侦测：全屏标志或窗口尺寸变化时才触发一次句柄复检，
+     * 平时只是三个字段比对，零分配零反射。普通拉窗口/最大化也会触发，
+     * 但句柄没变，复检就是一次空比对；只有真重建（LWJGL2 切换全屏/
+     * 无边框）才走重挂。
+     * Window-change detection: only a fullscreen-flag or display-size change
+     * triggers an hwnd revalidation; the steady state is three field compares
+     * with zero allocation and zero reflection. Plain resizes/maximize also
+     * trigger it, but the handle is unchanged so the recheck is a no-op; only a
+     * real recreation (LWJGL2 fullscreen/borderless switch) leads to a rehook.
+     */
+    private void detectWindowChange(Minecraft mc) {
+        boolean fs = mc.isFullScreen();
+        if (fs != lastFullscreen || mc.displayWidth != lastDisplayW || mc.displayHeight != lastDisplayH) {
+            lastFullscreen = fs;
+            lastDisplayW = mc.displayWidth;
+            lastDisplayH = mc.displayHeight;
+            rehookPending = true;
+        }
+        if (rehookPending && rehookWindow()) {
+            rehookPending = false;
+        }
+    }
+
+    /**
+     * 句柄复检与重挂：解析当前句柄，与已安装句柄不一致时重新安装子类化：
      * 解除旧句柄的子类化（清空 native 侧状态，对已销毁的窗口无害）→
      * 子类化新句柄 → 重置 IME 使能状态强制下个 tick 重新同步 → 作废残留快照。
      * 若不处理，旧子类化随窗口一起死掉，组字/提交/候选回调全断直到重启游戏。
-     * Hwnd-change self-healing: periodically revalidates the LWJGL window handle
-     * and re-subclasses when it changed (LWJGL2 destroys/recreates the window on
-     * fullscreen or borderless switches). Unsubclass the old handle (clears native
-     * state, harmless on a destroyed window) → subclass the new one → reset the
-     * IME-enabled state so the next tick resyncs → drop stale snapshots. Without
-     * this, all IME callbacks stay dead until the game restarts.
+     * Hwnd revalidation and rehook: resolves the current handle and re-subclasses
+     * when it differs from the installed one. Unsubclass the old handle (clears
+     * native state, harmless on a destroyed window) → subclass the new one →
+     * reset the IME-enabled state so the next tick resyncs → drop stale
+     * snapshots. Without this, all IME callbacks stay dead until the game
+     * restarts.
+     *
+     * @return true 表示复检完成；false 表示切换中途句柄暂不可用，需下个 tick 重试
+     *         true when done; false when the handle is momentarily unavailable
+     *         mid-switch and the caller should retry next tick
      */
-    private void maybeRehookWindow() {
-        if (++hwndCheckCooldown < HWND_CHECK_INTERVAL) {
-            return;
-        }
-        hwndCheckCooldown = 0;
+    private boolean rehookWindow() {
         long current = resolveHwnd();
-        // 切换中途可能短暂拿到 0，不动；下次复检再试 / Mid-switch may yield 0, retry later
-        if (current == 0L || current == hwnd) {
-            return;
+        if (current == 0L) {
+            return false;
+        }
+        if (current == hwnd) {
+            // 窗口没重建（普通缩放/最大化），无需重挂 / Not recreated, nothing to do
+            return true;
         }
         IMEBridge.unsubclassWindow(hwnd);
         IMEBridge.subclassWindow(current);
@@ -328,6 +366,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         // 旧窗口的组字/候选快照已无意义 / Stale snapshots from the old window
         compositionInfo = null;
         candidatePage = null;
+        return true;
     }
 
     /** 消费已提交文字，写入聚焦文本框 */
