@@ -287,11 +287,15 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     /**
-     * 计算并同步候选窗位置（GUI 坐标→窗口客户区像素坐标）。
+     * 计算并同步系统组词/候选窗位置（GUI 坐标→窗口客户区像素坐标）。
      * 优先使用 Mixin 上报的光标位置（跟随光标，对齐准绳的 setTextInputArea 语义），
      * 尚未上报时回退到文本框左下角。
+     * 组字中额外下压一个 PreEdit 框高：自绘 PreEdit 框占据光标下沿，
+     * 系统组词窗贴到其下方，两框上下相接、一体呈现（仿 Windows 原生组词 UI）。
      * Prefers the caret position reported by the Mixin (caret following, matching
      * the modern setTextInputArea semantics); falls back to the field's corner.
+     * While composing, the OS window is pushed down by one PreEdit box height so
+     * it stacks right below the self-drawn PreEdit box, like the native IME UI.
      */
     private void updateCandidatePos(Minecraft mc, GuiScreen screen, GuiTextField field) {
         if (screen.width <= 0 || screen.height <= 0) {
@@ -305,6 +309,11 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             // 回退：文本框左下角（GUI 单位） / Fallback: field bottom-left corner
             guiX = field.xPosition;
             guiY = field.yPosition + field.height;
+        }
+        // 组字中：系统窗让位给自绘 PreEdit 框，压到其下沿（+1 为两框间隙）
+        // Composing: yield to the self-drawn PreEdit box, stack right below it
+        if (getCompositionInfo() != null) {
+            guiY += IMEOverlay.getPreeditBoxHeight(mc.fontRenderer) + 1;
         }
         int px = (int) Math.round(guiX * scaleX);
         int py = (int) Math.round(guiY * scaleY);
