@@ -204,6 +204,23 @@ public class IMEBridge {
     }
 
     /**
+     * 设置原生候选条开关（两后端共享的本地层全局量）。
+     * true = 候选窗由系统/输入法自身绘制（默认）；
+     * false = 隐藏原生候选窗，改由 Java 侧据候选快照自绘。
+     * TSF 路径在安装时据此选择激活模式（UiLess 与否），
+     * 必须先于 {@link #install(long, int)} 调用；IMM32 路径逐消息生效。
+     * Sets the native candidate bar switch (a native-layer global shared by
+     * both backends). true = the OS/IME draws its own candidate window
+     * (default); false = suppress it and let the Java side self-draw from the
+     * candidate snapshots. Must be called before {@link #install(long, int)}
+     * for the TSF path (UiLess activation decision); the IMM32 path honors it
+     * per message.
+     *
+     * @param nativeBar true 原生候选条；false 自绘候选框
+     */
+    public static native void setNativeCandidateBar(boolean nativeBar);
+
+    /**
      * 后端名称（日志用）。 / Backend display name for logging.
      *
      * @param backend 后端常量

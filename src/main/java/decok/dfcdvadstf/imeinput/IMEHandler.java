@@ -63,10 +63,21 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     /**
      * 配置的后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
-     * {@code BACKEND_IMM32}），由 {@link #init(int)} 从 Forge 配置传入。
-     * Configured backend mode, passed in from the Forge config via {@link #init(int)}.
+     * {@code BACKEND_IMM32}），由 {@link #init(int, boolean)} 从 Forge 配置传入。
+     * Configured backend mode, passed in from the Forge config via {@link #init(int, boolean)}.
      */
     private static int backendMode = IMEBridge.BACKEND_AUTO;
+
+    /**
+     * 配置的原生候选条开关（{@code candidateNativeBar}）：true = 候选窗由
+     * 系统/输入法自身绘制（默认）；false = 隐藏原生候选窗，由
+     * {@link IMEOverlay} 据候选快照自绘。安装前同步给本地层。
+     * Configured native candidate bar switch ({@code candidateNativeBar}):
+     * true = the OS/IME draws its own candidate window (default); false =
+     * suppress it and let {@link IMEOverlay} self-draw from the snapshots.
+     * Synced to the native layer before install.
+     */
+    private static boolean nativeCandidateBar = true;
 
     /**
      * 窗口改动侦测基准：上次观察到的全屏标志与窗口尺寸。
@@ -119,17 +130,24 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     // ============================================================
 
     /**
-     * 在客户端初始化时调用：记录后端模式、注册 tick 事件监听，并把自绘组词窗 Overlay
-     * 挂入 CatFrame 的 OverlayManager（渲染由 CatFrame 的 DrawScreenEvent 驱动）。
+     * 在客户端初始化时调用：记录后端模式与候选条归属、注册 tick 事件监听，
+     * 并把自绘组词窗 Overlay 挂入 CatFrame 的 OverlayManager
+     * （渲染由 CatFrame 的 DrawScreenEvent 驱动）。
+     * 自绘候选开关直接写入 {@link IMEOverlay#selfDrawCandidates}；
      * 真正的后端安装延迟到第一次 tick（此时 Display 已创建）。
-     * Records the backend mode, registers the tick listener and hooks the
-     * self-drawn composition overlay into CatFrame's OverlayManager; the actual
-     * backend install is deferred to the first tick (Display exists by then).
+     * Records the backend mode and candidate bar ownership, registers the tick
+     * listener and hooks the self-drawn composition overlay into CatFrame's
+     * OverlayManager; the self-draw switch is written straight into
+     * {@link IMEOverlay#selfDrawCandidates}. The actual backend install is
+     * deferred to the first tick (Display exists by then).
      *
-     * @param mode 后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}）
+     * @param mode      后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}）
+     * @param nativeBar true = 原生候选条（默认）；false = 自绘候选框
      */
-    public static void init(int mode) {
+    public static void init(int mode, boolean nativeBar) {
         backendMode = mode;
+        nativeCandidateBar = nativeBar;
+        IMEOverlay.selfDrawCandidates = !nativeBar;
         FMLCommonHandler.instance().bus().register(INSTANCE);
         OverlayManager.INSTANCE.register(IMEOverlay.INSTANCE);
     }
@@ -306,6 +324,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             return;
         }
         IMEBridge.setCallback(this);
+        // 安装前同步候选条归属：TSF 路径在安装时据此选择激活模式
+        // Sync candidate bar ownership before install (TSF activation-mode decision)
+        IMEBridge.setNativeCandidateBar(nativeCandidateBar);
         int backend = IMEBridge.install(hwnd, backendMode);
         // 初始状态禁用 IME，待聚焦文本框时再启用
         IMEBridge.setEnabled(hwnd, false);
@@ -494,10 +515,11 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     @Override
     public void onCandidatesUpdate(IMEBridge.Candidate[] candidates, int selectedIndex) {
-        // 候选框由当前活动输入法自己画；快照仅供保留的自绘候选框
-        // （IMEOverlay，默认不启用）日后消费。
-        // The active IME draws the candidate box itself; this snapshot only
-        // feeds the reserved self-drawn candidate box (IMEOverlay, off by default).
+        // 候选框归属由配置决定：原生候选条（默认）时快照仅作旁路保留；
+        // 自绘模式（candidateNativeBar=false）下快照是 IMEOverlay 候选框的唯一数据源。
+        // Candidate bar ownership is config-driven: with the native bar (default)
+        // this snapshot is a mere side channel; in self-draw mode
+        // (candidateNativeBar=false) it is the sole feed of the IMEOverlay box.
         if (candidates == null || candidates.length == 0) {
             this.candidatePage = null;
             return;

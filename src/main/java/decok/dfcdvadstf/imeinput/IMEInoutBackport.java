@@ -20,7 +20,19 @@ public class IMEInoutBackport {
         // Client-only: install IME backend & callbacks.
         // 仅客户端：安装 IME 后端与回调（避免在专用服务端加载客户端类）。
         if (event.getSide().isClient()) {
-            IMEHandler.init(loadBackendConfig(event));
+            Configuration config = new Configuration(event.getSuggestedConfigurationFile());
+            int mode;
+            boolean nativeBar;
+            try {
+                config.load();
+                mode = loadBackendConfig(config);
+                nativeBar = loadCandidateBarConfig(config);
+            } finally {
+                if (config.hasChanged()) {
+                    config.save();
+                }
+            }
+            IMEHandler.init(mode, nativeBar);
         }
     }
 
@@ -32,24 +44,15 @@ public class IMEInoutBackport {
      * {@code general.backend = AUTO | TSF | IMM32}, defaulting to AUTO (try TSF,
      * silently fall back to IMM32); invalid values fall back to AUTO with a log.
      *
-     * @param event preInit 事件（提供推荐配置文件路径）
+     * @param config 已加载的 Forge 配置（调用方负责 load/save）
      * @return {@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}
      */
-    private int loadBackendConfig(FMLPreInitializationEvent event) {
-        Configuration config = new Configuration(event.getSuggestedConfigurationFile());
-        String value;
-        try {
-            config.load();
-            value = config.getString("backend", Configuration.CATEGORY_GENERAL, "AUTO",
-                    "IME backend: AUTO = try TSF then fall back to IMM32; "
-                            + "TSF / IMM32 = force that backend. "
-                            + "IME 后端：AUTO = 先试 TSF 失败降级 IMM32；TSF / IMM32 = 强制指定后端。",
-                    new String[] { "AUTO", "TSF", "IMM32" });
-        } finally {
-            if (config.hasChanged()) {
-                config.save();
-            }
-        }
+    private int loadBackendConfig(Configuration config) {
+        String value = config.getString("backend", Configuration.CATEGORY_GENERAL, "AUTO",
+                "IME backend: AUTO = try TSF then fall back to IMM32; "
+                        + "TSF / IMM32 = force that backend. "
+                        + "IME 后端：AUTO = 先试 TSF 失败降级 IMM32；TSF / IMM32 = 强制指定后端。",
+                new String[] { "AUTO", "TSF", "IMM32" });
         if ("TSF".equalsIgnoreCase(value)) {
             return IMEBridge.BACKEND_TSF;
         }
@@ -60,6 +63,30 @@ public class IMEInoutBackport {
             logger.warn("[IME] Unknown backend '" + value + "' in imeinput.cfg, using AUTO");
         }
         return IMEBridge.BACKEND_AUTO;
+    }
+
+    /**
+     * 从 Forge 配置读取候选条外观开关。
+     * {@code general.candidateNativeBar = true | false}，默认 true：
+     * 候选窗由系统/输入法自身绘制；false 时隐藏原生候选窗，
+     * 改由模组的 IMEOverlay 自绘候选框（与 PreEdit 框上下堆叠）。
+     * 启动时读取一次，修改后需重启游戏生效。
+     * Reads the candidate bar appearance switch:
+     * {@code general.candidateNativeBar = true | false}, default true (the
+     * OS/IME draws its own candidate window); false hides the native window
+     * and the mod's IMEOverlay self-draws the candidate box instead (stacked
+     * below the PreEdit box). Read once at startup; changes need a restart.
+     *
+     * @param config 已加载的 Forge 配置（调用方负责 load/save）
+     * @return true = 原生候选条；false = 自绘候选框
+     */
+    private boolean loadCandidateBarConfig(Configuration config) {
+        return config.getBoolean("candidateNativeBar", Configuration.CATEGORY_GENERAL, true,
+                "Candidate bar appearance: true = the OS/IME draws its native candidate window; "
+                        + "false = hide it and let the mod self-draw the candidate box. "
+                        + "Needs a game restart. "
+                        + "候选条外观：true = 系统/输入法原生候选窗；false = 隐藏原生候选窗，"
+                        + "由模组自绘候选框。修改后需重启游戏。");
     }
 
 }

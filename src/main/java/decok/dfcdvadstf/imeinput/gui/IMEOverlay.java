@@ -23,17 +23,22 @@ import org.lwjgl.opengl.GL11;
  * │ 1. 候选  2. 候选  3. 候选   │  ← 组词候选框（微软输入法自己画）
  * └──────────────────────────┘
  * </pre>
- * 候选框<b>一定且必须由微软输入法来画</b>（不分窗口化/全屏）——{@link IMEHandler}
- * 用 CFS_POINT 把系统组词窗下压到 PreEdit 框下沿，两框上下相接。
- * 本类内的自绘候选框代码<b>保留但默认不启用</b>（{@link #selfDrawCandidates}），留作后用。
+ * 候选框的归属由配置 {@code candidateNativeBar} 决定：默认（true）由当前活动
+ * 输入法自己画——{@link IMEHandler} 用 CFS_POINT / GetTextExt 把系统组词窗下压到
+ * PreEdit 框下沿，两框上下相接；设为 false 时本地层隐藏原生候选窗，
+ * 本类的自绘候选框（{@link #selfDrawCandidates}）接管绘制，同样贴在
+ * PreEdit 框下方。
  * <p>
  * IME self-drawn composition overlay (plugged into the CatFrame Overlay system).
  * Mirrors the native Windows composition UI as two stacked boxes: the <b>PreEdit
  * box</b> is self-drawn whenever composing, in windowed and fullscreen mode alike.
- * The <b>candidate box</b> below it is always drawn by the Microsoft IME itself —
- * {@link IMEHandler} pushes the OS composition window (CFS_POINT) right below the
- * PreEdit box so the two stack together. The self-drawn candidate box code is kept
- * but disabled by default ({@link #selfDrawCandidates}), reserved for future use.
+ * Ownership of the <b>candidate box</b> below it follows the
+ * {@code candidateNativeBar} config: by default (true) the active IME draws it
+ * itself — {@link IMEHandler} pushes the OS composition window (CFS_POINT /
+ * GetTextExt) right below the PreEdit box so the two stack together; when set
+ * to false the native layer hides the OS candidate UI and this class's
+ * self-drawn candidate box ({@link #selfDrawCandidates}) takes over, stacked
+ * in the same spot.
  * <p>
  * 渲染驱动完全复用 CatFrame 的 {@code ClientOverlayHandler}
  * （{@code DrawScreenEvent.Post} → {@code OverlayManager.renderAll}），
@@ -47,10 +52,15 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     public static final IMEOverlay INSTANCE = new IMEOverlay();
 
     /**
-     * 自绘候选框开关：默认关闭——候选框一定且必须由微软输入法来画，
-     * 自绘代码仅作保留，留待日后启用。
-     * Self-drawn candidate box switch: off by default — the candidate box is
-     * always drawn by the Microsoft IME; the code is kept for future use.
+     * 自绘候选框开关：由配置 {@code candidateNativeBar} 驱动
+     * （{@link IMEHandler#init} 写入，取其反值）。默认 false——候选框由
+     * 当前活动输入法自己画；配置设为 candidateNativeBar=false 时为 true，
+     * 本类接管候选框绘制（本地层同步隐藏原生候选窗）。
+     * Self-drawn candidate box switch, driven by the {@code candidateNativeBar}
+     * config (written by {@link IMEHandler#init} as its negation). false by
+     * default — the active IME draws the candidate box itself; true when the
+     * config opts out of the native bar, making this class take over (the
+     * native layer hides the OS candidate UI in step).
      */
     public static volatile boolean selfDrawCandidates = false;
 
@@ -66,6 +76,10 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     private static final int COLOR_BG = 0xE8101010;
     /** 框体边框色 / Box border */
     private static final int COLOR_BORDER = 0xFF3C3C3C;
+    /** PreEdit 框边框色（#52A01B 绿）/ PreEdit box border (#52A01B green) */
+    private static final int COLOR_PREEDIT_BORDER = 0xFF52A01B;
+    /** PreEdit 框内部底色（#FFFFFF 白）/ PreEdit box interior (#FFFFFF white) */
+    private static final int COLOR_PREEDIT_BG = 0xFFFFFFFF;
     /** 普通文字色 / Normal text */
     private static final int COLOR_TEXT = 0xFFE0E0E0;
     /** 聚焦分段文字色 / Focused clause text */
@@ -159,10 +173,10 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     }
 
     /**
-     * 当前应自绘的候选页：仅开关启用时返回快照，默认恒为 null
-     * （候选框由微软输入法自己画，本 Overlay 不插手）。
-     * The candidate page to self-draw: only when the switch is enabled; null by
-     * default — the Microsoft IME draws the candidate box itself.
+     * 当前应自绘的候选页：仅开关启用时返回快照，原生候选条模式下恒为 null
+     * （候选框由当前活动输入法自己画，本 Overlay 不插手）。
+     * The candidate page to self-draw: only when the switch is enabled; null in
+     * native-bar mode — the active IME draws the candidate box itself.
      */
     private static IMEHandler.CandidatePage visibleCandidatePage() {
         return selfDrawCandidates ? IMEHandler.getCandidatePage() : null;
@@ -239,11 +253,13 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
 
     /**
      * 绘制两框堆叠的组词窗：PreEdit 框（分段高亮 + 光标）在上；
-     * 自绘候选框（默认关闭，选中项高亮）紧贴其下，各自带边框与背景。
+     * 自绘候选框（candidateNativeBar=false 时启用，选中项高亮）紧贴其下，
+     * 各自带边框与背景。
      * 坐标已由 OverlayManager 依锚点与 offset 解析并临时写入 x/y。
      * Draws the two stacked boxes: PreEdit box (block highlight + caret) on top,
-     * self-drawn candidate box (off by default, selection highlight) right below,
-     * each with its own border and background. Position was resolved by OverlayManager.
+     * self-drawn candidate box (enabled via candidateNativeBar=false, selection
+     * highlight) right below, each with its own border and background. Position
+     * was resolved by OverlayManager.
      */
     @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
@@ -263,7 +279,7 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
         // ── PreEdit 框：逐分段绘制，聚焦段亮色 + 加粗下划线，组字内光标竖线 ──
         // ── PreEdit box: per-block, focused block bright + thick underline, caret bar ──
         if (info != null && preeditBoxH > 0) {
-            drawBox(x, boxY, preeditBoxW, preeditBoxH);
+            drawBox(x, boxY, preeditBoxW, preeditBoxH, COLOR_PREEDIT_BORDER, COLOR_PREEDIT_BG);
             int bx = x + 1 + PADDING;
             int ty = boxY + 1 + PADDING;
             int underlineY = ty + fr.FONT_HEIGHT;
@@ -289,10 +305,10 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
             boxY += preeditBoxH + BOX_GAP;
         }
 
-        // ── 自绘候选框（默认关闭，留作后用）：横向排布，选中项浅底深字高亮 ──
-        // ── Self-drawn candidate box (off by default, kept for future use) ──
+        // ── 自绘候选框（candidateNativeBar=false 时启用）：横向排布，选中项浅底深字高亮 ──
+        // ── Self-drawn candidate box (enabled via candidateNativeBar=false) ──
         if (page != null && candBoxH > 0) {
-            drawBox(x, boxY, candBoxW, candBoxH);
+            drawBox(x, boxY, candBoxW, candBoxH, COLOR_BORDER, COLOR_BG);
             int px = x + 1 + PADDING;
             int ty = boxY + 1 + PADDING;
             for (int i = 0; i < page.texts.length; i++) {
@@ -311,9 +327,15 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
         GL11.glEnable(GL11.GL_DEPTH_TEST);
     }
 
-    /** 画一个 1px 边框 + 深色底的框体 / Draws one bordered dark box */
-    private static void drawBox(int x, int y, int w, int h) {
-        Gui.drawRect(x, y, x + w, y + h, COLOR_BORDER);
-        Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1, COLOR_BG);
+    /**
+     * 画一个 1px 边框 + 实色底的框体。
+     * Draws one box with a 1px border and a solid-color interior.
+     *
+     * @param borderColor 边框色 / border color (ARGB)
+     * @param bgColor     内部底色 / interior fill color (ARGB)
+     */
+    private static void drawBox(int x, int y, int w, int h, int borderColor, int bgColor) {
+        Gui.drawRect(x, y, x + w, y + h, borderColor);
+        Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1, bgColor);
     }
 }
