@@ -1,0 +1,27 @@
+{
+  "__comment": [
+    "IME composition window theme descriptor. Resource packs override this file",
+    "at assets/imeinput/ime_theme.json to reskin the IME overlay.",
+    "IME 组词窗主题描述文件：资源包按同路径覆盖本文件即可换肤。",
+    "style: FLAT = self-drawn border+fill rectangles / 平面自绘（1px 边框矩形 + 内部实色矩形）;",
+    "       TEXTURE = nine-slice stretch of window.texture / 九宫格拉伸窗体纹理。",
+    "Colors accept #AARRGGBB, AARRGGBB or #RRGGBB (opaque). 颜色支持带/不带 alpha 的十六进制。"
+  ],
+  "style": "FLAT",
+  "window": {
+    "texture": "imeinput:textures/gui/ime_window.png",
+    "textureSize": 32,
+    "cornerSize": 4,
+    "borderColor": "#FF34343C",
+    "backgroundColor": "#F0141418"
+  },
+  "colors": {
+    "separator": "#FF3C3C46",
+    "text": "#FFE0E0E0",
+    "focusedText": "#FFFFFFFF",
+    "underline": "#FFFFFFFF",
+    "caret": "#FFD0D0D0",
+    "selectedBackground": "#EBB2DAE0",
+    "selectedText": "#FF202020"
+  }
+}

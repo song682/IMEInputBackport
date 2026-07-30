@@ -5,6 +5,7 @@ import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
 import decok.dfcdvadstf.imeinput.gui.IMEOverlay;
+import decok.dfcdvadstf.imeinput.gui.IMETheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
@@ -134,12 +135,15 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * 并把自绘组词窗 Overlay 挂入 CatFrame 的 OverlayManager
      * （渲染由 CatFrame 的 DrawScreenEvent 驱动）。
      * 自绘候选开关直接写入 {@link IMEOverlay#selfDrawCandidates}；
-     * 真正的后端安装延迟到第一次 tick（此时 Display 已创建）。
+     * 主题系统（{@link IMETheme#init}）同步注册资源重载监听，外观由资源包
+     * 主题文件驱动；真正的后端安装延迟到第一次 tick（此时 Display 已创建）。
      * Records the backend mode and candidate bar ownership, registers the tick
      * listener and hooks the self-drawn composition overlay into CatFrame's
      * OverlayManager; the self-draw switch is written straight into
-     * {@link IMEOverlay#selfDrawCandidates}. The actual backend install is
-     * deferred to the first tick (Display exists by then).
+     * {@link IMEOverlay#selfDrawCandidates}. The theme system
+     * ({@link IMETheme#init}) registers its resource reload listener here, so
+     * the overlay look is driven by the resource-pack theme file. The actual
+     * backend install is deferred to the first tick (Display exists by then).
      *
      * @param mode      后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}）
      * @param nativeBar true = 原生候选条（默认）；false = 自绘候选框
@@ -148,6 +152,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         backendMode = mode;
         nativeCandidateBar = nativeBar;
         IMEOverlay.selfDrawCandidates = !nativeBar;
+        IMETheme.init();
         FMLCommonHandler.instance().bus().register(INSTANCE);
         OverlayManager.INSTANCE.register(IMEOverlay.INSTANCE);
     }

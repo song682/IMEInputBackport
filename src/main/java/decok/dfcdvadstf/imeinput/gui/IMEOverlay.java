@@ -15,30 +15,32 @@ import org.lwjgl.opengl.GL11;
 /**
  * IME 自绘组词窗 Overlay（接入 CatFrame Overlay 体系）。
  * <p>
- * 仿 Windows 原生组词窗的两框堆叠结构，PreEdit 框与组词候选框上下相接、一起呈现：
+ * 自绘部分呈现为<b>单一窗体</b>：PreEdit 区（组字分段高亮 + 光标）与自绘候选区
+ * 合并在同一个窗体内，中间以一条内嵌分隔线分区：
  * <pre>
  * ┌──────────────────────────┐
- * │ 组字串（分段 + 聚焦段 + 光标）│  ← PreEdit 框（本 Overlay 自绘，任何模式）
- * ├──────────────────────────┤
- * │ 1. 候选  2. 候选  3. 候选   │  ← 组词候选框（微软输入法自己画）
+ * │ 组字串（分段 + 聚焦段 + 光标）│  ← PreEdit 区（本 Overlay 自绘，任何模式）
+ * │ ──────────────────────── │  ← 内嵌分隔线（两区同窗时才有）
+ * │ 1. 候选  2. 候选  3. 候选   │  ← 候选区（selfDrawCandidates 时并入本窗）
  * └──────────────────────────┘
  * </pre>
  * 候选框的归属由配置 {@code candidateNativeBar} 决定：默认（true）由当前活动
  * 输入法自己画——{@link IMEHandler} 用 CFS_POINT / GetTextExt 把系统组词窗下压到
- * PreEdit 框下沿，两框上下相接；设为 false 时本地层隐藏原生候选窗，
- * 本类的自绘候选框（{@link #selfDrawCandidates}）接管绘制，同样贴在
- * PreEdit 框下方。
+ * PreEdit 窗体下沿，两窗上下相接（外部窗口无法并入自绘窗体）；设为 false 时
+ * 本地层隐藏原生候选窗，候选区并入本窗体由 {@link #selfDrawCandidates} 接管。
+ * 窗体外观（平面自绘 / 九宫格纹理）与配色统一由 {@link IMETheme} 掌管。
  * <p>
  * IME self-drawn composition overlay (plugged into the CatFrame Overlay system).
- * Mirrors the native Windows composition UI as two stacked boxes: the <b>PreEdit
- * box</b> is self-drawn whenever composing, in windowed and fullscreen mode alike.
- * Ownership of the <b>candidate box</b> below it follows the
- * {@code candidateNativeBar} config: by default (true) the active IME draws it
- * itself — {@link IMEHandler} pushes the OS composition window (CFS_POINT /
- * GetTextExt) right below the PreEdit box so the two stack together; when set
- * to false the native layer hides the OS candidate UI and this class's
- * self-drawn candidate box ({@link #selfDrawCandidates}) takes over, stacked
- * in the same spot.
+ * The self-drawn part renders as a <b>single window</b>: the PreEdit section
+ * (block highlight + caret) and the self-drawn candidate section share one
+ * window chrome, split by an inset separator line. Ownership of the candidate
+ * UI follows the {@code candidateNativeBar} config: by default (true) the
+ * active IME draws its own external window — {@link IMEHandler} pushes it
+ * (CFS_POINT / GetTextExt) right below the PreEdit window, as an external
+ * window can never merge into ours; when set to false the native layer hides
+ * the OS candidate UI and the candidate section joins this window via
+ * {@link #selfDrawCandidates}. Window chrome (flat / nine-slice texture) and
+ * the palette are owned by {@link IMETheme}.
  * <p>
  * 渲染驱动完全复用 CatFrame 的 {@code ClientOverlayHandler}
  * （{@code DrawScreenEvent.Post} → {@code OverlayManager.renderAll}），
@@ -64,44 +66,24 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
      */
     public static volatile boolean selfDrawCandidates = false;
 
-    // ──── 视觉常量 / Visual constants ────
+    // ──── 布局常量 / Layout constants ────
+    // 配色与窗体外观由 IMETheme 从资源包主题加载
+    // Palette & window chrome are loaded from the resource-pack theme by IMETheme
 
-    /** 框体内边距 / Box padding */
+    /** 窗体内边距 / Window padding */
     private static final int PADDING = 3;
-    /** PreEdit 框与候选框之间的间隙（两框相接）/ Gap between the two stacked boxes */
-    private static final int BOX_GAP = 1;
+    /** 分隔线区总高：上 2px 空隙 + 1px 线 + 下 2px 空隙 / Separator zone: 2+1+2 */
+    private static final int SEPARATOR_ZONE = 5;
     /** 候选项之间的间距 / Gap between candidate items */
     private static final int ITEM_GAP = 6;
-    /** 框体背景色（深色半透明）/ Box background (translucent dark) */
-    private static final int COLOR_BG = 0xE8101010;
-    /** 框体边框色 / Box border */
-    private static final int COLOR_BORDER = 0xFF3C3C3C;
-    /** PreEdit 框边框色（#52A01B 绿）/ PreEdit box border (#52A01B green) */
-    private static final int COLOR_PREEDIT_BORDER = 0xFF52A01B;
-    /** PreEdit 框内部底色（#FFFFFF 白）/ PreEdit box interior (#FFFFFF white) */
-    private static final int COLOR_PREEDIT_BG = 0xFFFFFFFF;
-    /** 普通文字色 / Normal text */
-    private static final int COLOR_TEXT = 0xFFE0E0E0;
-    /** 聚焦分段文字色 / Focused clause text */
-    private static final int COLOR_FOCUSED = 0xFFFFFFFF;
-    /** 组字内光标竖线色 / In-composition caret bar */
-    private static final int COLOR_CARET = 0xFFD0D0D0;
-    /** 选中候选项背景色（取自 IngameIME 的用色）/ Selected candidate background */
-    private static final int COLOR_SELECTED_BG = 0xEBB2DAE0;
-    /** 选中候选项文字色（浅底深字）/ Selected candidate text (dark on light) */
-    private static final int COLOR_SELECTED_TEXT = 0xFF202020;
 
     // ──── 布局缓存（isVisible 中重算，render 中消费）────
     // ──── Layout cache (recomputed in isVisible, consumed by render) ────
 
-    /** PreEdit 框宽（含边框；0 表示本帧无此框）/ PreEdit box width incl. border */
-    private int preeditBoxW;
-    /** PreEdit 框高（含边框）/ PreEdit box height incl. border */
-    private int preeditBoxH;
-    /** 候选框宽（含边框；0 表示本帧无此框）/ Candidate box width incl. border */
-    private int candBoxW;
-    /** 候选框高（含边框）/ Candidate box height incl. border */
-    private int candBoxH;
+    /** PreEdit 区内容高（0 表示本帧无此区）/ PreEdit section content height, 0 = absent */
+    private int preeditSectionH;
+    /** 候选区内容高（0 表示本帧无此区）/ Candidate section content height, 0 = absent */
+    private int candSectionH;
 
     private IMEOverlay() {
     }
@@ -185,54 +167,58 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     // ──── 布局 / Layout ────
 
     /**
-     * 依据当前组字与候选快照重算两个框的尺寸与总包围盒。
-     * Recomputes both box sizes and the stacked bounding box from the snapshots.
+     * 依据当前组字与候选快照重算两区内容高与单一窗体的总包围盒：
+     * 窗宽取两区内容宽的较大者，两区同窗时中间追加一条分隔线区。
+     * Recomputes both section heights and the single window's bounding box:
+     * width is the wider of the two sections; a separator zone is inserted
+     * when both sections share the window.
      */
     private void relayout(FontRenderer fr, IMEBridge.CompositionInfo info, IMEHandler.CandidatePage page) {
-        preeditBoxW = 0;
-        preeditBoxH = 0;
-        candBoxW = 0;
-        candBoxH = 0;
+        preeditSectionH = 0;
+        candSectionH = 0;
+        int preeditW = 0;
+        int candW = 0;
 
         if (info != null) {
-            int w = 0;
             for (int i = 0; i < info.blocks.length; i++) {
-                w += fr.getStringWidth(info.blocks[i]);
+                preeditW += fr.getStringWidth(info.blocks[i]);
                 if (i < info.blocks.length - 1) {
-                    w += 1; // 分段间 1px 缝隙 / 1px inter-block gap
+                    preeditW += 1; // 分段间 1px 缝隙 / 1px inter-block gap
                 }
             }
-            preeditBoxW = w + PADDING * 2 + 2; // +2 边框 / border
-            preeditBoxH = getPreeditBoxHeight(fr);
+            // 文本 + 下划线 / text + underline
+            preeditSectionH = fr.FONT_HEIGHT + 2;
         }
 
         if (page != null) {
-            int w = 0;
             for (int i = 0; i < page.texts.length; i++) {
-                w += fr.getStringWidth(candidateLabel(i, page.texts[i]));
+                candW += fr.getStringWidth(candidateLabel(i, page.texts[i]));
                 if (i < page.texts.length - 1) {
-                    w += ITEM_GAP;
+                    candW += ITEM_GAP;
                 }
             }
-            candBoxW = w + PADDING * 2 + 2;
-            candBoxH = fr.FONT_HEIGHT + PADDING * 2 + 2;
+            candSectionH = fr.FONT_HEIGHT;
         }
 
-        // 包围盒：两框上下堆叠（供 OverlayManager 解析锚点与越界钳位）
-        // Bounding box of the stacked boxes (for anchoring and edge clamping)
-        this.width = Math.max(preeditBoxW, candBoxW);
-        this.height = preeditBoxH + candBoxH
-                + (preeditBoxH > 0 && candBoxH > 0 ? BOX_GAP : 0);
+        // 单一窗体包围盒：内容 + 内边距 + 1px 边框（供 OverlayManager 解析锚点与越界钳位）
+        // Single-window bounding box: content + padding + 1px border
+        this.width = Math.max(preeditW, candW) + PADDING * 2 + 2;
+        this.height = preeditSectionH + candSectionH
+                + (preeditSectionH > 0 && candSectionH > 0 ? SEPARATOR_ZONE : 0)
+                + PADDING * 2 + 2;
     }
 
     /**
-     * PreEdit 框总高（GUI 单位，含内边距与边框）。供 {@link IMEHandler}
-     * 把系统组词窗下压到本框下沿，使窗口化下两框上下相接。
-     * Total PreEdit box height (GUI units, padding + border included). Used by
-     * {@link IMEHandler} to push the OS composition window right below this box.
+     * PreEdit 独立窗体总高（GUI 单位，含内边距与边框）：原生候选条模式下
+     * 窗体内只有 PreEdit 区时的窗高。供 {@link IMEHandler} 把系统组词窗
+     * 下压到本窗下沿，使内外两窗上下相接。
+     * Total height of the standalone PreEdit window (GUI units, padding and
+     * border included) — the window height when only the PreEdit section is
+     * present (native candidate bar mode). Used by {@link IMEHandler} to push
+     * the OS composition window right below it.
      *
      * @param fr 字体渲染器 / font renderer
-     * @return 框高（GUI 单位）/ box height in GUI units
+     * @return 窗高（GUI 单位）/ window height in GUI units
      */
     public static int getPreeditBoxHeight(FontRenderer fr) {
         // 文本 + 下划线 + 内边距 + 边框 / text + underline + padding + border
@@ -252,14 +238,17 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     // ──── 渲染 / Rendering ────
 
     /**
-     * 绘制两框堆叠的组词窗：PreEdit 框（分段高亮 + 光标）在上；
-     * 自绘候选框（candidateNativeBar=false 时启用，选中项高亮）紧贴其下，
-     * 各自带边框与背景。
+     * 绘制单一窗体的组词窗：窗体（边框 + 底）由 {@link IMETheme} 按当前风格
+     * 绘制一次；窗体内 PreEdit 区（分段高亮 + 光标）在上，自绘候选区
+     * （candidateNativeBar=false 时启用，选中项高亮）在下，两区同窗时中间画
+     * 一条内嵌分隔线。
      * 坐标已由 OverlayManager 依锚点与 offset 解析并临时写入 x/y。
-     * Draws the two stacked boxes: PreEdit box (block highlight + caret) on top,
-     * self-drawn candidate box (enabled via candidateNativeBar=false, selection
-     * highlight) right below, each with its own border and background. Position
-     * was resolved by OverlayManager.
+     * Draws the single-window composition UI: {@link IMETheme} paints the
+     * window chrome once for the current style; inside it the PreEdit section
+     * (block highlight + caret) sits on top and the self-drawn candidate
+     * section (enabled via candidateNativeBar=false, selection highlight)
+     * below, split by an inset separator when both are present. Position was
+     * resolved by OverlayManager.
      */
     @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
@@ -272,17 +261,21 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
         Minecraft mc = Minecraft.getMinecraft();
         FontRenderer fr = mc.fontRenderer;
         int x = this.x;
-        int boxY = this.y;
 
         GL11.glDisable(GL11.GL_DEPTH_TEST);
 
-        // ── PreEdit 框：逐分段绘制，聚焦段亮色 + 加粗下划线，组字内光标竖线 ──
-        // ── PreEdit box: per-block, focused block bright + thick underline, caret bar ──
-        if (info != null && preeditBoxH > 0) {
-            drawBox(x, boxY, preeditBoxW, preeditBoxH, COLOR_PREEDIT_BORDER, COLOR_PREEDIT_BG);
-            int bx = x + 1 + PADDING;
-            int ty = boxY + 1 + PADDING;
-            int underlineY = ty + fr.FONT_HEIGHT;
+        // ── 窗体：整窗一次绘制（FLAT 双矩形 / TEXTURE 九宫格），交给主题 ──
+        // ── Window chrome: painted once for the whole window by the theme ──
+        IMETheme.drawWindow(x, this.y, this.width, this.height);
+
+        int cx = x + 1 + PADDING;
+        int cy = this.y + 1 + PADDING;
+
+        // ── PreEdit 区：逐分段绘制，聚焦段亮色 + 加粗下划线，组字内光标竖线 ──
+        // ── PreEdit section: per-block, focused block bright + thick underline, caret bar ──
+        if (info != null && preeditSectionH > 0) {
+            int bx = cx;
+            int underlineY = cy + fr.FONT_HEIGHT;
             int charOffset = 0;
             int caretX = bx;
             for (int i = 0; i < info.blocks.length; i++) {
@@ -295,47 +288,42 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
                     caretX = bx + fr.getStringWidth(block.substring(0, caretInBlock));
                 }
                 boolean focused = i == info.focusedBlock;
-                fr.drawStringWithShadow(block, bx, ty, focused ? COLOR_FOCUSED : COLOR_TEXT);
+                fr.drawStringWithShadow(block, bx, cy,
+                        focused ? IMETheme.focusedTextColor() : IMETheme.textColor());
                 int bw = fr.getStringWidth(block);
-                Gui.drawRect(bx, underlineY, bx + bw, underlineY + (focused ? 2 : 1), 0xFFFFFFFF);
+                Gui.drawRect(bx, underlineY, bx + bw, underlineY + (focused ? 2 : 1),
+                        IMETheme.underlineColor());
                 bx += bw + (i < info.blocks.length - 1 ? 1 : 0);
                 charOffset += block.length();
             }
-            Gui.drawRect(caretX, ty - 1, caretX + 1, ty + fr.FONT_HEIGHT, COLOR_CARET);
-            boxY += preeditBoxH + BOX_GAP;
+            Gui.drawRect(caretX, cy - 1, caretX + 1, cy + fr.FONT_HEIGHT, IMETheme.caretColor());
+            cy += preeditSectionH;
         }
 
-        // ── 自绘候选框（candidateNativeBar=false 时启用）：横向排布，选中项浅底深字高亮 ──
-        // ── Self-drawn candidate box (enabled via candidateNativeBar=false) ──
-        if (page != null && candBoxH > 0) {
-            drawBox(x, boxY, candBoxW, candBoxH, COLOR_BORDER, COLOR_BG);
-            int px = x + 1 + PADDING;
-            int ty = boxY + 1 + PADDING;
+        // ── 分隔线：两区同窗时居中于分隔线区 / Separator, centered in its zone ──
+        if (info != null && preeditSectionH > 0 && page != null && candSectionH > 0) {
+            IMETheme.drawSeparator(x, cy + SEPARATOR_ZONE / 2, this.width);
+            cy += SEPARATOR_ZONE;
+        }
+
+        // ── 自绘候选区（candidateNativeBar=false 时启用）：横向排布，选中项浅底深字高亮 ──
+        // ── Self-drawn candidate section (enabled via candidateNativeBar=false) ──
+        if (page != null && candSectionH > 0) {
+            int px = cx;
             for (int i = 0; i < page.texts.length; i++) {
                 String label = candidateLabel(i, page.texts[i]);
                 int lw = fr.getStringWidth(label);
                 if (i == page.selectedIndex) {
-                    Gui.drawRect(px - 1, ty - 1, px + lw + 1, ty + fr.FONT_HEIGHT, COLOR_SELECTED_BG);
-                    fr.drawString(label, px, ty, COLOR_SELECTED_TEXT);
+                    Gui.drawRect(px - 1, cy - 1, px + lw + 1, cy + fr.FONT_HEIGHT,
+                            IMETheme.selectedBackgroundColor());
+                    fr.drawString(label, px, cy, IMETheme.selectedTextColor());
                 } else {
-                    fr.drawStringWithShadow(label, px, ty, COLOR_TEXT);
+                    fr.drawStringWithShadow(label, px, cy, IMETheme.textColor());
                 }
                 px += lw + ITEM_GAP;
             }
         }
 
         GL11.glEnable(GL11.GL_DEPTH_TEST);
-    }
-
-    /**
-     * 画一个 1px 边框 + 实色底的框体。
-     * Draws one box with a 1px border and a solid-color interior.
-     *
-     * @param borderColor 边框色 / border color (ARGB)
-     * @param bgColor     内部底色 / interior fill color (ARGB)
-     */
-    private static void drawBox(int x, int y, int w, int h, int borderColor, int bgColor) {
-        Gui.drawRect(x, y, x + w, y + h, borderColor);
-        Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1, bgColor);
     }
 }
