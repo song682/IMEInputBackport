@@ -63,6 +63,7 @@ Every field is optional — leave one out and the built-in default fills in.
 |---|---|---|---|
 | `style` | string | `"FLAT"` | Window chrome style: `FLAT` or `TEXTURE` (case-insensitive). |
 | `mergeSections` | boolean | `true` | Whether the PreEdit (composition) section and the self-drawn candidate section share one window. |
+| `preeditWindow` | object | *absent* | Optional separate skin for the standalone PreEdit window — see [its own section](#the-preeditwindow-object) below. |
 
 ### `style`
 
@@ -122,6 +123,44 @@ so they never overlap — tiny compositions still render cleanly.
 Semi-transparency works: the texture's alpha channel is respected, so frosted
 or glassy chromes are fair game.
 
+## The `preeditWindow` object
+
+Sometimes the composition box and the candidate box shouldn't dress alike —
+say, a slim borderless strip for the text you're typing and a chunky framed
+panel for the candidates. That's what this optional block is for: it reskins
+the **standalone PreEdit window**, which shows up in two situations:
+
+- **split mode** (`mergeSections: false`) — the top window of the pair;
+- **native candidate bar mode** (`candidateNativeBar=true` in the config) —
+  the mod only ever draws a PreEdit window there, and this is it.
+
+The merged single window and the split-mode candidate window always wear the
+base `window` skin — `preeditWindow` never touches those.
+
+| Field | Falls back to | Notes |
+|---|---|---|
+| `style` | top-level `style` | Yes, the two windows may mix styles — FLAT preedit over a TEXTURE candidate box is perfectly legal. |
+| `texture` | `window.texture` | Its own nine-slice texture, if `style` resolves to `TEXTURE`. |
+| `textureSize` | `window.textureSize` | |
+| `cornerSize` | `window.cornerSize` | |
+| `borderColor` | `window.borderColor` | `FLAT` style only. |
+| `backgroundColor` | `window.backgroundColor` | `FLAT` style only. |
+
+Inheritance is per-field: set just `backgroundColor` and everything else
+keeps tracking the base window. Leave the whole block out and the PreEdit
+window is pixel-identical to the base one — which is exactly the shipped
+default.
+
+One deliberate omission: there's no separate `colors` set for the PreEdit
+window. Text, underline and caret colors come from the shared `colors`
+palette regardless of which window they land in — the block skins the chrome,
+not the content.
+
+> In merged mode (`mergeSections: true` with self-drawn candidates), the
+> single window keeps the base skin even during the brief moments when no
+> candidates are visible — otherwise the chrome would flicker between two
+> looks as the candidate list pops in and out.
+
 ## The `colors` object
 
 These apply to both styles — they color the *content*, not the chrome.
@@ -172,7 +211,7 @@ to that field's default, leaving the rest of your theme intact.
 }
 ```
 
-**Your own textured window, split into two boxes:**
+**Your own textured window, split into two boxes, preedit dressed differently:**
 
 ```json
 {
@@ -182,18 +221,26 @@ to that field's default, leaving the rest of your theme intact.
     "texture": "mypack:textures/gui/ime_frame.png",
     "textureSize": 48,
     "cornerSize": 6
+  },
+  "preeditWindow": {
+    "style": "FLAT",
+    "borderColor": "#00000000",
+    "backgroundColor": "#A0101014"
   }
 }
 ```
 
-Colors are omitted above, so text rendering keeps the default dark-theme
-palette — mix and match however you like.
+Here the candidate box gets the fancy 48px nine-slice frame while the preedit
+strip above it goes minimal — a borderless translucent bar. Colors are
+omitted, so text rendering keeps the default dark-theme palette — mix and
+match however you like.
 
 ## Troubleshooting
 
 - **Nothing changed after editing?** Hit `F3 + T` to force a resource reload,
   and check the log for a `[IME] Theme loaded: ...` line — it reports the
-  style and `mergeSections` value actually in effect.
+  style, `mergeSections` value and whether a custom `preeditWindow` block was
+  picked up (`custom` vs `inherit`).
 - **Everything reverted to the dark default?** Your JSON probably failed to
   parse; look for `[IME] Theme descriptor unavailable` in the log. A stray
   trailing comma is the usual suspect.

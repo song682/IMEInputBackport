@@ -7,6 +7,9 @@
     "       TEXTURE = nine-slice stretch of window.texture / 九宫格拉伸窗体纹理。",
     "mergeSections: true = PreEdit + self-drawn candidates share one window (inset separator);",
     "               false = two stacked standalone windows. 合并单窗（内嵌分隔线）/ 上下独立双窗。",
+    "preeditWindow (optional object): reskins the standalone PreEdit window (split mode's top",
+    "  window / native candidate bar mode). Same fields as window plus its own style; every",
+    "  field falls back to window. 可选：单独定制独立 PreEdit 窗，字段同 window 外加 style，逐项回退。",
     "Colors accept #AARRGGBB, AARRGGBB or #RRGGBB (opaque). 颜色支持带/不带 alpha 的十六进制。"
   ],
   "style": "FLAT",

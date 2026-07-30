@@ -297,20 +297,34 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
         GL11.glDisable(GL11.GL_DEPTH_TEST);
 
         if (splitWindows) {
-            // ── 分离双窗：两窗体各自绘制，上下以 WINDOW_GAP 相隔 ──
-            // ── Split twin windows: each with its own chrome, WINDOW_GAP apart ──
+            // ── 分离双窗：两窗体各自绘制，上下以 WINDOW_GAP 相隔；
+            //    上窗用主题的独立 PreEdit 皮肤，下窗用基础皮肤 ──
+            // ── Split twin windows, WINDOW_GAP apart: top window wears the
+            //    theme's standalone PreEdit skin, bottom the base skin ──
             int chrome = PADDING * 2 + 2;
             int preeditWinH = preeditSectionH + chrome;
-            IMETheme.drawWindow(x, this.y, preeditContentW + chrome, preeditWinH);
+            IMETheme.drawPreeditWindow(x, this.y, preeditContentW + chrome, preeditWinH);
             drawPreeditSection(fr, info, x + 1 + PADDING, this.y + 1 + PADDING);
 
             int candWinY = this.y + preeditWinH + WINDOW_GAP;
             IMETheme.drawWindow(x, candWinY, candContentW + chrome, candSectionH + chrome);
             drawCandidateSection(fr, page, x + 1 + PADDING, candWinY + 1 + PADDING);
         } else {
-            // ── 单一窗体：整窗一次绘制（FLAT 双矩形 / TEXTURE 九宫格），交给主题 ──
-            // ── Single window: chrome painted once by the theme ──
-            IMETheme.drawWindow(x, this.y, this.width, this.height);
+            // ── 单一窗体：整窗一次绘制（FLAT 双矩形 / TEXTURE 九宫格），交给主题。
+            //    窗内只有 PreEdit 且它本就独立成窗（原生候选条模式 / 分离模式候选
+            //    暂缺）时用 PreEdit 皮肤；合并模式始终基础皮肤，免得候选出没时窗体风格闪变 ──
+            // ── Single window, chrome painted once by the theme. A PreEdit-only
+            //    window that is standalone by nature (native bar mode / split mode
+            //    with candidates momentarily absent) wears the PreEdit skin;
+            //    merged mode sticks to the base skin so the chrome never flips
+            //    as candidates come and go ──
+            boolean standalonePreedit = preeditSectionH > 0 && candSectionH == 0
+                    && !(selfDrawCandidates && IMETheme.mergeSections());
+            if (standalonePreedit) {
+                IMETheme.drawPreeditWindow(x, this.y, this.width, this.height);
+            } else {
+                IMETheme.drawWindow(x, this.y, this.width, this.height);
+            }
 
             int cx = x + 1 + PADDING;
             int cy = this.y + 1 + PADDING;

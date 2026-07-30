@@ -35,6 +35,11 @@ import java.io.Reader;
  * 文字/高亮等前景配色两种风格共用（默认深底浅字），本类只暴露取色接口，
  * 具体文字排版仍由 {@link IMEOverlay} 负责。
  * <p>
+ * 独立 PreEdit 窗体（分离双窗模式的上窗、原生候选条模式下的 PreEdit 窗）
+ * 可由主题文件可选的 {@code preeditWindow} 块单独定制外观（style / 纹理 /
+ * 边框 / 底色），每个字段缺失时逐项回退到基础 {@code window}；合并单窗与
+ * 分离模式的候选窗始终用基础 {@code window} 皮肤。
+ * <p>
  * IME composition window theme system: owns the window chrome (fill, border,
  * separator) and the color palette. Themes are <b>resource-pack loaded</b>:
  * the mod ships a default descriptor at {@code assets/imeinput/ime_theme.json}
@@ -46,6 +51,11 @@ import java.io.Reader;
  * with zero texture dependency; TEXTURE stretches the theme's nine-slice
  * window texture (4px fixed corners, stretched edges/center). Foreground
  * colors are shared by both styles; text layout stays in {@link IMEOverlay}.
+ * A standalone PreEdit window (split twin-window mode's top window, or the
+ * PreEdit window in native candidate bar mode) can be reskinned separately
+ * via the optional {@code preeditWindow} block, each field falling back to
+ * the base {@code window}; the merged window and the split-mode candidate
+ * window always wear the base skin.
  */
 public final class IMETheme implements IResourceManagerReloadListener {
 
@@ -63,14 +73,15 @@ public final class IMETheme implements IResourceManagerReloadListener {
     }
 
     /**
-     * 不可变主题数据：一次重载解析出一份整体发布。
-     * Immutable theme data: parsed and published as a whole per reload.
+     * 一套窗体皮肤：绘制风格 + 纹理参数 + FLAT 配色。主题持有两份——
+     * 基础皮肤（合并单窗 / 分离模式候选窗）与独立 PreEdit 窗皮肤。
+     * One window skin: draw style + texture params + FLAT palette. The theme
+     * holds two — the base skin (merged window / split-mode candidate window)
+     * and the standalone PreEdit window skin.
      */
-    private static final class ThemeData {
+    private static final class WindowSkin {
         /** true = 九宫格纹理风格；false = 平面自绘 / true = nine-slice, false = flat */
         final boolean textured;
-        /** true = PreEdit 区与自绘候选区合入同一窗体 / merge both sections into one window */
-        final boolean mergeSections;
         /** 窗体纹理（TEXTURE 风格用）/ Window texture for the TEXTURE style */
         final ResourceLocation texture;
         /** 纹理边长（像素）/ Texture dimension in pixels */
@@ -81,6 +92,29 @@ public final class IMETheme implements IResourceManagerReloadListener {
         final int border;
         /** FLAT 窗体内部底色 / FLAT window interior fill */
         final int background;
+
+        WindowSkin(boolean textured, ResourceLocation texture, int textureSize,
+                   int cornerSize, int border, int background) {
+            this.textured = textured;
+            this.texture = texture;
+            this.textureSize = textureSize;
+            this.cornerSize = cornerSize;
+            this.border = border;
+            this.background = background;
+        }
+    }
+
+    /**
+     * 不可变主题数据：一次重载解析出一份整体发布。
+     * Immutable theme data: parsed and published as a whole per reload.
+     */
+    private static final class ThemeData {
+        /** 基础窗体皮肤（合并单窗 / 候选窗）/ Base skin: merged & candidate windows */
+        final WindowSkin window;
+        /** 独立 PreEdit 窗皮肤（逐字段回退到基础皮肤）/ Standalone PreEdit window skin */
+        final WindowSkin preeditWindow;
+        /** true = PreEdit 区与自绘候选区合入同一窗体 / merge both sections into one window */
+        final boolean mergeSections;
         /** 分隔线色 / Separator line */
         final int separator;
         /** 普通文字色 / Normal text */
@@ -96,17 +130,12 @@ public final class IMETheme implements IResourceManagerReloadListener {
         /** 选中候选项文字色 / Selected candidate text */
         final int selectedText;
 
-        ThemeData(boolean textured, boolean mergeSections, ResourceLocation texture,
-                  int textureSize, int cornerSize,
-                  int border, int background, int separator, int text, int focusedText,
+        ThemeData(WindowSkin window, WindowSkin preeditWindow, boolean mergeSections,
+                  int separator, int text, int focusedText,
                   int underline, int caret, int selectedBackground, int selectedText) {
-            this.textured = textured;
+            this.window = window;
+            this.preeditWindow = preeditWindow;
             this.mergeSections = mergeSections;
-            this.texture = texture;
-            this.textureSize = textureSize;
-            this.cornerSize = cornerSize;
-            this.border = border;
-            this.background = background;
             this.separator = separator;
             this.text = text;
             this.focusedText = focusedText;
@@ -117,13 +146,17 @@ public final class IMETheme implements IResourceManagerReloadListener {
         }
 
         /**
-         * 内置默认主题（与随包 ime_theme.json 保持一致）：深底浅字平面风格。
-         * Built-in defaults (mirroring the bundled ime_theme.json): dark flat look.
+         * 内置默认主题（与随包 ime_theme.json 保持一致）：深底浅字平面风格，
+         * PreEdit 窗皮肤默认完全继承基础皮肤。
+         * Built-in defaults (mirroring the bundled ime_theme.json): dark flat
+         * look; the PreEdit window skin fully inherits the base skin.
          */
         static ThemeData defaults() {
-            return new ThemeData(false, true,
-                    new ResourceLocation("imeinput", "textures/gui/ime_window.png"), 32, 4,
-                    0xFF34343C, 0xF0141418, 0xFF3C3C46,
+            WindowSkin base = new WindowSkin(false,
+                    new ResourceLocation("imeinput", "textures/gui/ime_window.png"),
+                    32, 4, 0xFF34343C, 0xF0141418);
+            return new ThemeData(base, base, true,
+                    0xFF3C3C46,
                     0xFFE0E0E0, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFD0D0D0,
                     0xEBB2DAE0, 0xFF202020);
         }
@@ -171,16 +204,37 @@ public final class IMETheme implements IResourceManagerReloadListener {
             boolean textured = "TEXTURE".equalsIgnoreCase(optString(root, "style", "FLAT"));
             JsonObject window = optObject(root, "window");
             JsonObject colors = optObject(root, "colors");
+            JsonObject preedit = optObject(root, "preeditWindow");
 
-            ThemeData loaded = new ThemeData(
+            // 基础皮肤：合并单窗与分离模式候选窗 / Base skin: merged & candidate windows
+            WindowSkin base = new WindowSkin(
                     textured,
-                    optBool(root, "mergeSections", def.mergeSections),
                     new ResourceLocation(optString(window, "texture",
                             "imeinput:textures/gui/ime_window.png")),
-                    optInt(window, "textureSize", def.textureSize),
-                    optInt(window, "cornerSize", def.cornerSize),
-                    optColor(window, "borderColor", def.border),
-                    optColor(window, "backgroundColor", def.background),
+                    optInt(window, "textureSize", def.window.textureSize),
+                    optInt(window, "cornerSize", def.window.cornerSize),
+                    optColor(window, "borderColor", def.window.border),
+                    optColor(window, "backgroundColor", def.window.background));
+
+            // 独立 PreEdit 窗皮肤：可选块，每个字段逐项回退到基础皮肤
+            // （style 回退到顶层 style）；块缺失时直接复用基础皮肤。
+            // Standalone PreEdit window skin: optional block, every field falls
+            // back to the base skin (style falls back to the top-level style);
+            // an absent block reuses the base skin outright.
+            WindowSkin preeditSkin = preedit == null ? base : new WindowSkin(
+                    preedit.has("style")
+                            ? "TEXTURE".equalsIgnoreCase(optString(preedit, "style", "FLAT"))
+                            : textured,
+                    new ResourceLocation(optString(preedit, "texture", base.texture.toString())),
+                    optInt(preedit, "textureSize", base.textureSize),
+                    optInt(preedit, "cornerSize", base.cornerSize),
+                    optColor(preedit, "borderColor", base.border),
+                    optColor(preedit, "backgroundColor", base.background));
+
+            ThemeData loaded = new ThemeData(
+                    base,
+                    preeditSkin,
+                    optBool(root, "mergeSections", def.mergeSections),
                     optColor(colors, "separator", def.separator),
                     optColor(colors, "text", def.text),
                     optColor(colors, "focusedText", def.focusedText),
@@ -190,7 +244,9 @@ public final class IMETheme implements IResourceManagerReloadListener {
                     optColor(colors, "selectedText", def.selectedText));
             IMEInoutBackport.logger.info("[IME] Theme loaded: style="
                     + (textured ? "TEXTURE" : "FLAT")
-                    + " mergeSections=" + loaded.mergeSections + " from " + THEME_JSON);
+                    + " mergeSections=" + loaded.mergeSections
+                    + " preeditWindow=" + (preedit != null ? "custom" : "inherit")
+                    + " from " + THEME_JSON);
             return loaded;
         } catch (Throwable t) {
             // 首载时模组资源尚未注入属预期路径，仅记 debug；正式重载失败记 warn
@@ -313,12 +369,33 @@ public final class IMETheme implements IResourceManagerReloadListener {
      * @param h 窗体高 / window height
      */
     public static void drawWindow(int x, int y, int w, int h) {
-        ThemeData t = theme;
-        if (t.textured) {
-            drawNineSlice(t, x, y, w, h);
+        drawSkin(theme.window, x, y, w, h);
+    }
+
+    /**
+     * 绘制独立 PreEdit 窗体（分离双窗模式的上窗 / 原生候选条模式的 PreEdit 窗），
+     * 用主题可选的 {@code preeditWindow} 皮肤；未定制时与基础窗体完全一致。
+     * Draws a standalone PreEdit window (split twin-window mode's top window /
+     * the PreEdit window in native candidate bar mode) with the theme's
+     * optional {@code preeditWindow} skin; identical to the base window when
+     * not customized.
+     *
+     * @param x 左上角 GUI X / top-left GUI X
+     * @param y 左上角 GUI Y / top-left GUI Y
+     * @param w 窗体宽 / window width
+     * @param h 窗体高 / window height
+     */
+    public static void drawPreeditWindow(int x, int y, int w, int h) {
+        drawSkin(theme.preeditWindow, x, y, w, h);
+    }
+
+    /** 按皮肤绘制一个窗体 / Draws one window chrome with the given skin */
+    private static void drawSkin(WindowSkin s, int x, int y, int w, int h) {
+        if (s.textured) {
+            drawNineSlice(s, x, y, w, h);
         } else {
-            Gui.drawRect(x, y, x + w, y + h, t.border);
-            Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1, t.background);
+            Gui.drawRect(x, y, x + w, y + h, s.border);
+            Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1, s.background);
         }
     }
 
@@ -342,7 +419,7 @@ public final class IMETheme implements IResourceManagerReloadListener {
      * stretched center. Corner sizes are clamped so tiny windows don't
      * overlap their corner patches.
      */
-    private static void drawNineSlice(ThemeData t, int x, int y, int w, int h) {
+    private static void drawNineSlice(WindowSkin t, int x, int y, int w, int h) {
         int texSize = t.textureSize;
         int cw = Math.min(t.cornerSize, w / 2);
         int ch = Math.min(t.cornerSize, h / 2);
