@@ -69,6 +69,8 @@ public final class IMETheme implements IResourceManagerReloadListener {
     private static final class ThemeData {
         /** true = 九宫格纹理风格；false = 平面自绘 / true = nine-slice, false = flat */
         final boolean textured;
+        /** true = PreEdit 区与自绘候选区合入同一窗体 / merge both sections into one window */
+        final boolean mergeSections;
         /** 窗体纹理（TEXTURE 风格用）/ Window texture for the TEXTURE style */
         final ResourceLocation texture;
         /** 纹理边长（像素）/ Texture dimension in pixels */
@@ -94,10 +96,12 @@ public final class IMETheme implements IResourceManagerReloadListener {
         /** 选中候选项文字色 / Selected candidate text */
         final int selectedText;
 
-        ThemeData(boolean textured, ResourceLocation texture, int textureSize, int cornerSize,
+        ThemeData(boolean textured, boolean mergeSections, ResourceLocation texture,
+                  int textureSize, int cornerSize,
                   int border, int background, int separator, int text, int focusedText,
                   int underline, int caret, int selectedBackground, int selectedText) {
             this.textured = textured;
+            this.mergeSections = mergeSections;
             this.texture = texture;
             this.textureSize = textureSize;
             this.cornerSize = cornerSize;
@@ -117,7 +121,7 @@ public final class IMETheme implements IResourceManagerReloadListener {
          * Built-in defaults (mirroring the bundled ime_theme.json): dark flat look.
          */
         static ThemeData defaults() {
-            return new ThemeData(false,
+            return new ThemeData(false, true,
                     new ResourceLocation("imeinput", "textures/gui/ime_window.png"), 32, 4,
                     0xFF34343C, 0xF0141418, 0xFF3C3C46,
                     0xFFE0E0E0, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFD0D0D0,
@@ -170,6 +174,7 @@ public final class IMETheme implements IResourceManagerReloadListener {
 
             ThemeData loaded = new ThemeData(
                     textured,
+                    optBool(root, "mergeSections", def.mergeSections),
                     new ResourceLocation(optString(window, "texture",
                             "imeinput:textures/gui/ime_window.png")),
                     optInt(window, "textureSize", def.textureSize),
@@ -184,7 +189,8 @@ public final class IMETheme implements IResourceManagerReloadListener {
                     optColor(colors, "selectedBackground", def.selectedBackground),
                     optColor(colors, "selectedText", def.selectedText));
             IMEInoutBackport.logger.info("[IME] Theme loaded: style="
-                    + (textured ? "TEXTURE" : "FLAT") + " from " + THEME_JSON);
+                    + (textured ? "TEXTURE" : "FLAT")
+                    + " mergeSections=" + loaded.mergeSections + " from " + THEME_JSON);
             return loaded;
         } catch (Throwable t) {
             // 首载时模组资源尚未注入属预期路径，仅记 debug；正式重载失败记 warn
@@ -210,6 +216,11 @@ public final class IMETheme implements IResourceManagerReloadListener {
     /** 取整数字段，缺失回退默认 / Optional int field */
     private static int optInt(JsonObject obj, String key, int def) {
         return obj != null && obj.has(key) ? obj.get(key).getAsInt() : def;
+    }
+
+    /** 取布尔字段，缺失回退默认 / Optional boolean field */
+    private static boolean optBool(JsonObject obj, String key, boolean def) {
+        return obj != null && obj.has(key) ? obj.get(key).getAsBoolean() : def;
     }
 
     /** 取子对象，缺失返回 null / Optional child object */
@@ -243,6 +254,17 @@ public final class IMETheme implements IResourceManagerReloadListener {
     // ============================================================
     //  取色接口（IMEOverlay 消费）/ Palette accessors for IMEOverlay
     // ============================================================
+
+    /**
+     * PreEdit 区与自绘候选区是否合入同一窗体（主题可配，默认合并）；
+     * false 时两区各自独立窗体上下堆叠。
+     * Whether the PreEdit and self-drawn candidate sections merge into one
+     * window (theme-configurable, merged by default); false renders two
+     * stacked standalone windows.
+     */
+    public static boolean mergeSections() {
+        return theme.mergeSections;
+    }
 
     /** 普通文字色 / Normal text color */
     public static int textColor() {

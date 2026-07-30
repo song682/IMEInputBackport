@@ -15,8 +15,10 @@ import org.lwjgl.opengl.GL11;
 /**
  * IME 自绘组词窗 Overlay（接入 CatFrame Overlay 体系）。
  * <p>
- * 自绘部分呈现为<b>单一窗体</b>：PreEdit 区（组字分段高亮 + 光标）与自绘候选区
- * 合并在同一个窗体内，中间以一条内嵌分隔线分区：
+ * 自绘部分默认呈现为<b>单一窗体</b>：PreEdit 区（组字分段高亮 + 光标）与自绘候选区
+ * 合并在同一个窗体内，中间以一条内嵌分隔线分区；是否合并由主题选项
+ * {@code mergeSections} 决定（{@link IMETheme#mergeSections()}，设为 false 时
+ * 两区各自独立窗体上下堆叠）：
  * <pre>
  * ┌──────────────────────────┐
  * │ 组字串（分段 + 聚焦段 + 光标）│  ← PreEdit 区（本 Overlay 自绘，任何模式）
@@ -31,9 +33,11 @@ import org.lwjgl.opengl.GL11;
  * 窗体外观（平面自绘 / 九宫格纹理）与配色统一由 {@link IMETheme} 掌管。
  * <p>
  * IME self-drawn composition overlay (plugged into the CatFrame Overlay system).
- * The self-drawn part renders as a <b>single window</b>: the PreEdit section
- * (block highlight + caret) and the self-drawn candidate section share one
- * window chrome, split by an inset separator line. Ownership of the candidate
+ * By default the self-drawn part renders as a <b>single window</b>: the PreEdit
+ * section (block highlight + caret) and the self-drawn candidate section share
+ * one window chrome, split by an inset separator line; whether they merge is a
+ * theme option ({@link IMETheme#mergeSections()} — false stacks two standalone
+ * windows instead). Ownership of the candidate
  * UI follows the {@code candidateNativeBar} config: by default (true) the
  * active IME draws its own external window — {@link IMEHandler} pushes it
  * (CFS_POINT / GetTextExt) right below the PreEdit window, as an external
@@ -74,6 +78,8 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     private static final int PADDING = 3;
     /** 分隔线区总高：上 2px 空隙 + 1px 线 + 下 2px 空隙 / Separator zone: 2+1+2 */
     private static final int SEPARATOR_ZONE = 5;
+    /** 分离双窗模式下两窗体的垂直间隙 / Vertical gap between split twin windows */
+    private static final int WINDOW_GAP = 2;
     /** 候选项之间的间距 / Gap between candidate items */
     private static final int ITEM_GAP = 6;
 
@@ -84,6 +90,12 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     private int preeditSectionH;
     /** 候选区内容高（0 表示本帧无此区）/ Candidate section content height, 0 = absent */
     private int candSectionH;
+    /** PreEdit 区内容宽 / PreEdit section content width */
+    private int preeditContentW;
+    /** 候选区内容宽 / Candidate section content width */
+    private int candContentW;
+    /** 本帧是否分离双窗（两区同在且主题不合并）/ Split twin-window mode this frame */
+    private boolean splitWindows;
 
     private IMEOverlay() {
     }
@@ -167,23 +179,27 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     // ──── 布局 / Layout ────
 
     /**
-     * 依据当前组字与候选快照重算两区内容高与单一窗体的总包围盒：
-     * 窗宽取两区内容宽的较大者，两区同窗时中间追加一条分隔线区。
-     * Recomputes both section heights and the single window's bounding box:
-     * width is the wider of the two sections; a separator zone is inserted
-     * when both sections share the window.
+     * 依据当前组字与候选快照重算两区内容尺寸与总包围盒：
+     * 合并模式下窗宽取两区内容宽的较大者，两区同窗时中间追加一条分隔线区；
+     * 分离模式（主题 mergeSections=false 且两区同在）下两窗体各自收紧到
+     * 自身内容宽，包围盒取两窗并集（供 OverlayManager 解析锚点与越界钳位）。
+     * Recomputes both section sizes and the total bounding box: in merged mode
+     * the window width is the wider of the two sections, with a separator zone
+     * inserted when both share the window; in split mode (theme
+     * mergeSections=false with both sections present) each window shrinks to
+     * its own content width and the bounding box is their union.
      */
     private void relayout(FontRenderer fr, IMEBridge.CompositionInfo info, IMEHandler.CandidatePage page) {
         preeditSectionH = 0;
         candSectionH = 0;
-        int preeditW = 0;
-        int candW = 0;
+        preeditContentW = 0;
+        candContentW = 0;
 
         if (info != null) {
             for (int i = 0; i < info.blocks.length; i++) {
-                preeditW += fr.getStringWidth(info.blocks[i]);
+                preeditContentW += fr.getStringWidth(info.blocks[i]);
                 if (i < info.blocks.length - 1) {
-                    preeditW += 1; // 分段间 1px 缝隙 / 1px inter-block gap
+                    preeditContentW += 1; // 分段间 1px 缝隙 / 1px inter-block gap
                 }
             }
             // 文本 + 下划线 / text + underline
@@ -192,20 +208,34 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
 
         if (page != null) {
             for (int i = 0; i < page.texts.length; i++) {
-                candW += fr.getStringWidth(candidateLabel(i, page.texts[i]));
+                candContentW += fr.getStringWidth(candidateLabel(i, page.texts[i]));
                 if (i < page.texts.length - 1) {
-                    candW += ITEM_GAP;
+                    candContentW += ITEM_GAP;
                 }
             }
             candSectionH = fr.FONT_HEIGHT;
         }
 
-        // 单一窗体包围盒：内容 + 内边距 + 1px 边框（供 OverlayManager 解析锚点与越界钳位）
-        // Single-window bounding box: content + padding + 1px border
-        this.width = Math.max(preeditW, candW) + PADDING * 2 + 2;
-        this.height = preeditSectionH + candSectionH
-                + (preeditSectionH > 0 && candSectionH > 0 ? SEPARATOR_ZONE : 0)
-                + PADDING * 2 + 2;
+        // 分离双窗仅在两区同在且主题选择不合并时生效；单区时两种模式无差别
+        // Split twin windows only when both sections exist and the theme opts out
+        splitWindows = preeditSectionH > 0 && candSectionH > 0 && !IMETheme.mergeSections();
+
+        // 周边开销：内边距 + 1px 边框 / Chrome overhead: padding + 1px border
+        int chromeW = PADDING * 2 + 2;
+        int chromeH = PADDING * 2 + 2;
+        if (splitWindows) {
+            // 包围盒 = 两窗并集：宽取较宽窗，高为两窗叠加 + 窗间隙
+            // Bounding box = union: wider window's width, both heights + gap
+            this.width = Math.max(preeditContentW, candContentW) + chromeW;
+            this.height = (preeditSectionH + chromeH) + WINDOW_GAP + (candSectionH + chromeH);
+        } else {
+            // 单一窗体：内容 + 内边距 + 1px 边框，两区同窗时插入分隔线区
+            // Single window: content + padding + border, separator when shared
+            this.width = Math.max(preeditContentW, candContentW) + chromeW;
+            this.height = preeditSectionH + candSectionH
+                    + (preeditSectionH > 0 && candSectionH > 0 ? SEPARATOR_ZONE : 0)
+                    + chromeH;
+        }
     }
 
     /**
@@ -238,17 +268,19 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
     // ──── 渲染 / Rendering ────
 
     /**
-     * 绘制单一窗体的组词窗：窗体（边框 + 底）由 {@link IMETheme} 按当前风格
-     * 绘制一次；窗体内 PreEdit 区（分段高亮 + 光标）在上，自绘候选区
-     * （candidateNativeBar=false 时启用，选中项高亮）在下，两区同窗时中间画
-     * 一条内嵌分隔线。
+     * 绘制组词窗：窗体（边框 + 底）由 {@link IMETheme} 按当前风格绘制；
+     * 合并模式（主题 mergeSections=true，默认）下整窗一次绘制，窗内
+     * PreEdit 区（分段高亮 + 光标）在上，自绘候选区（candidateNativeBar=false
+     * 时启用，选中项高亮）在下，两区同窗时中间画一条内嵌分隔线；
+     * 分离模式下两区各自独立窗体上下堆叠，各自收紧到自身内容宽。
      * 坐标已由 OverlayManager 依锚点与 offset 解析并临时写入 x/y。
-     * Draws the single-window composition UI: {@link IMETheme} paints the
-     * window chrome once for the current style; inside it the PreEdit section
-     * (block highlight + caret) sits on top and the self-drawn candidate
-     * section (enabled via candidateNativeBar=false, selection highlight)
-     * below, split by an inset separator when both are present. Position was
-     * resolved by OverlayManager.
+     * Draws the composition UI: {@link IMETheme} paints each window chrome for
+     * the current style. Merged mode (theme mergeSections=true, default) paints
+     * one window — PreEdit section (block highlight + caret) on top, self-drawn
+     * candidate section (enabled via candidateNativeBar=false, selection
+     * highlight) below, split by an inset separator when both are present.
+     * Split mode stacks two standalone windows, each shrunk to its own content
+     * width. Position was resolved by OverlayManager.
      */
     @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
@@ -264,66 +296,107 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
 
         GL11.glDisable(GL11.GL_DEPTH_TEST);
 
-        // ── 窗体：整窗一次绘制（FLAT 双矩形 / TEXTURE 九宫格），交给主题 ──
-        // ── Window chrome: painted once for the whole window by the theme ──
-        IMETheme.drawWindow(x, this.y, this.width, this.height);
+        if (splitWindows) {
+            // ── 分离双窗：两窗体各自绘制，上下以 WINDOW_GAP 相隔 ──
+            // ── Split twin windows: each with its own chrome, WINDOW_GAP apart ──
+            int chrome = PADDING * 2 + 2;
+            int preeditWinH = preeditSectionH + chrome;
+            IMETheme.drawWindow(x, this.y, preeditContentW + chrome, preeditWinH);
+            drawPreeditSection(fr, info, x + 1 + PADDING, this.y + 1 + PADDING);
 
-        int cx = x + 1 + PADDING;
-        int cy = this.y + 1 + PADDING;
+            int candWinY = this.y + preeditWinH + WINDOW_GAP;
+            IMETheme.drawWindow(x, candWinY, candContentW + chrome, candSectionH + chrome);
+            drawCandidateSection(fr, page, x + 1 + PADDING, candWinY + 1 + PADDING);
+        } else {
+            // ── 单一窗体：整窗一次绘制（FLAT 双矩形 / TEXTURE 九宫格），交给主题 ──
+            // ── Single window: chrome painted once by the theme ──
+            IMETheme.drawWindow(x, this.y, this.width, this.height);
 
-        // ── PreEdit 区：逐分段绘制，聚焦段亮色 + 加粗下划线，组字内光标竖线 ──
-        // ── PreEdit section: per-block, focused block bright + thick underline, caret bar ──
-        if (info != null && preeditSectionH > 0) {
-            int bx = cx;
-            int underlineY = cy + fr.FONT_HEIGHT;
-            int charOffset = 0;
-            int caretX = bx;
-            for (int i = 0; i < info.blocks.length; i++) {
-                String block = info.blocks[i];
-                if (block.isEmpty()) {
-                    continue;
-                }
-                int caretInBlock = info.caretPosition - charOffset;
-                if (caretInBlock >= 0 && caretInBlock <= block.length()) {
-                    caretX = bx + fr.getStringWidth(block.substring(0, caretInBlock));
-                }
-                boolean focused = i == info.focusedBlock;
-                fr.drawStringWithShadow(block, bx, cy,
-                        focused ? IMETheme.focusedTextColor() : IMETheme.textColor());
-                int bw = fr.getStringWidth(block);
-                Gui.drawRect(bx, underlineY, bx + bw, underlineY + (focused ? 2 : 1),
-                        IMETheme.underlineColor());
-                bx += bw + (i < info.blocks.length - 1 ? 1 : 0);
-                charOffset += block.length();
+            int cx = x + 1 + PADDING;
+            int cy = this.y + 1 + PADDING;
+
+            if (info != null && preeditSectionH > 0) {
+                drawPreeditSection(fr, info, cx, cy);
+                cy += preeditSectionH;
             }
-            Gui.drawRect(caretX, cy - 1, caretX + 1, cy + fr.FONT_HEIGHT, IMETheme.caretColor());
-            cy += preeditSectionH;
-        }
 
-        // ── 分隔线：两区同窗时居中于分隔线区 / Separator, centered in its zone ──
-        if (info != null && preeditSectionH > 0 && page != null && candSectionH > 0) {
-            IMETheme.drawSeparator(x, cy + SEPARATOR_ZONE / 2, this.width);
-            cy += SEPARATOR_ZONE;
-        }
+            // ── 分隔线：两区同窗时居中于分隔线区 / Separator, centered in its zone ──
+            if (info != null && preeditSectionH > 0 && page != null && candSectionH > 0) {
+                IMETheme.drawSeparator(x, cy + SEPARATOR_ZONE / 2, this.width);
+                cy += SEPARATOR_ZONE;
+            }
 
-        // ── 自绘候选区（candidateNativeBar=false 时启用）：横向排布，选中项浅底深字高亮 ──
-        // ── Self-drawn candidate section (enabled via candidateNativeBar=false) ──
-        if (page != null && candSectionH > 0) {
-            int px = cx;
-            for (int i = 0; i < page.texts.length; i++) {
-                String label = candidateLabel(i, page.texts[i]);
-                int lw = fr.getStringWidth(label);
-                if (i == page.selectedIndex) {
-                    Gui.drawRect(px - 1, cy - 1, px + lw + 1, cy + fr.FONT_HEIGHT,
-                            IMETheme.selectedBackgroundColor());
-                    fr.drawString(label, px, cy, IMETheme.selectedTextColor());
-                } else {
-                    fr.drawStringWithShadow(label, px, cy, IMETheme.textColor());
-                }
-                px += lw + ITEM_GAP;
+            if (page != null && candSectionH > 0) {
+                drawCandidateSection(fr, page, cx, cy);
             }
         }
 
         GL11.glEnable(GL11.GL_DEPTH_TEST);
+    }
+
+    /**
+     * 绘制 PreEdit 区内容：逐分段绘制，聚焦段亮色 + 加粗下划线，组字内光标竖线。
+     * Draws the PreEdit section content: per-block, focused block bright with a
+     * thick underline, plus the in-composition caret bar.
+     *
+     * @param cx 内容区左上角 GUI X / content top-left GUI X
+     * @param cy 内容区左上角 GUI Y / content top-left GUI Y
+     */
+    private static void drawPreeditSection(FontRenderer fr, IMEBridge.CompositionInfo info, int cx, int cy) {
+        if (info == null) {
+            return;
+        }
+        int bx = cx;
+        int underlineY = cy + fr.FONT_HEIGHT;
+        int charOffset = 0;
+        int caretX = bx;
+        for (int i = 0; i < info.blocks.length; i++) {
+            String block = info.blocks[i];
+            if (block.isEmpty()) {
+                continue;
+            }
+            int caretInBlock = info.caretPosition - charOffset;
+            if (caretInBlock >= 0 && caretInBlock <= block.length()) {
+                caretX = bx + fr.getStringWidth(block.substring(0, caretInBlock));
+            }
+            boolean focused = i == info.focusedBlock;
+            fr.drawStringWithShadow(block, bx, cy,
+                    focused ? IMETheme.focusedTextColor() : IMETheme.textColor());
+            int bw = fr.getStringWidth(block);
+            Gui.drawRect(bx, underlineY, bx + bw, underlineY + (focused ? 2 : 1),
+                    IMETheme.underlineColor());
+            bx += bw + (i < info.blocks.length - 1 ? 1 : 0);
+            charOffset += block.length();
+        }
+        Gui.drawRect(caretX, cy - 1, caretX + 1, cy + fr.FONT_HEIGHT, IMETheme.caretColor());
+    }
+
+    /**
+     * 绘制自绘候选区内容（candidateNativeBar=false 时启用）：横向排布，
+     * 选中项浅底深字高亮。
+     * Draws the self-drawn candidate section content (enabled via
+     * candidateNativeBar=false): laid out horizontally, selection highlighted
+     * with a light background and dark text.
+     *
+     * @param cx 内容区左上角 GUI X / content top-left GUI X
+     * @param cy 内容区左上角 GUI Y / content top-left GUI Y
+     */
+    private static void drawCandidateSection(FontRenderer fr, IMEHandler.CandidatePage page, int cx, int cy) {
+        if (page == null) {
+            return;
+        }
+        int px = cx;
+        for (int i = 0; i < page.texts.length; i++) {
+            String label = candidateLabel(i, page.texts[i]);
+            int lw = fr.getStringWidth(label);
+            if (i == page.selectedIndex) {
+                Gui.drawRect(px - 1, cy - 1, px + lw + 1, cy + fr.FONT_HEIGHT,
+                        IMETheme.selectedBackgroundColor());
+                fr.drawString(label, px, cy, IMETheme.selectedTextColor());
+            } else {
+                fr.drawStringWithShadow(label, px, cy, IMETheme.textColor());
+            }
+            px += lw + ITEM_GAP;
+        }
     }
 }

@@ -5,9 +5,12 @@
     "IME 组词窗主题描述文件：资源包按同路径覆盖本文件即可换肤。",
     "style: FLAT = self-drawn border+fill rectangles / 平面自绘（1px 边框矩形 + 内部实色矩形）;",
     "       TEXTURE = nine-slice stretch of window.texture / 九宫格拉伸窗体纹理。",
+    "mergeSections: true = PreEdit + self-drawn candidates share one window (inset separator);",
+    "               false = two stacked standalone windows. 合并单窗（内嵌分隔线）/ 上下独立双窗。",
     "Colors accept #AARRGGBB, AARRGGBB or #RRGGBB (opaque). 颜色支持带/不带 alpha 的十六进制。"
   ],
   "style": "FLAT",
+  "mergeSections": true,
   "window": {
     "texture": "imeinput:textures/gui/ime_window.png",
     "textureSize": 32,
