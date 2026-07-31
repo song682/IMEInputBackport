@@ -3,12 +3,14 @@ package decok.dfcdvadstf.imeinput;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import decok.dfcdvadstf.catframe.compact.forge.event.CatFrameGuiEvent;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
 import decok.dfcdvadstf.imeinput.gui.IMEOverlay;
 import decok.dfcdvadstf.imeinput.gui.IMETheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
+import net.minecraftforge.common.MinecraftForge;
 import org.jnilib.imeinput.IMEBridge;
 
 import java.lang.ref.WeakReference;
@@ -154,6 +156,11 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         IMEOverlay.selfDrawCandidates = !nativeBar;
         IMETheme.init();
         FMLCommonHandler.instance().bus().register(INSTANCE);
+        // CatFrame 的 GuiScreen 键盘事件桥发布在 MinecraftForge.EVENT_BUS（非 FML 总线），
+        // 需单独注册以接收 KeyboardInputEvent.Pre（组字期间吞键）。
+        // CatFrame's GuiScreen keyboard event bridge posts on MinecraftForge.EVENT_BUS
+        // (not the FML bus); register separately for KeyboardInputEvent.Pre.
+        MinecraftForge.EVENT_BUS.register(INSTANCE);
         OverlayManager.INSTANCE.register(IMEOverlay.INSTANCE);
     }
 
@@ -269,6 +276,39 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
         GuiTextField field = focusedField.get();
         return field != null ? field.yPosition + field.height + 2 : 0;
+    }
+
+    // ============================================================
+    //  GUI 键盘事件拦截（CatFrame 事件桥）
+    //  GUI keyboard interception (CatFrame event bridge)
+    // ============================================================
+
+    /**
+     * 组字期间吞掉屏幕键盘事件：订阅 CatFrame 回填的
+     * {@link CatFrameGuiEvent.KeyboardInputEvent.Pre}（发射自其
+     * {@code MixinGuiScreenEventBridge}，包裹 {@code GuiScreen.handleKeyboardInput()}
+     * 调用点），取消后整体跳过本次按键处理——原版 {@code keyTyped}（含 Esc 关屏）、
+     * CatFrame 拆分派发与全局按键派发均被压掉。这避免了组字中字母键被文本框
+     * 二次录入、Esc 与输入法"取消组字"语义打架直接关屏等问题；
+     * 组字结束后按键照常放行，不影响英文直输。
+     * Swallows screen keyboard events while composing: subscribes to CatFrame's
+     * backfilled {@link CatFrameGuiEvent.KeyboardInputEvent.Pre} (fired from its
+     * {@code MixinGuiScreenEventBridge} wrapping the {@code handleKeyboardInput()}
+     * call site). Canceling skips the whole per-key handling — vanilla
+     * {@code keyTyped} (incl. Esc-to-close), CatFrame's split dispatch and the
+     * global key dispatch — preventing double letter input into the text field
+     * and the Esc fight between "close screen" and the IME's "cancel composition".
+     * Keys pass through normally when not composing, so direct English typing
+     * is unaffected.
+     *
+     * @param event CatFrame 键盘事件（Pre，可取消）
+     */
+    @SubscribeEvent
+    public void onGuiKeyboardPre(CatFrameGuiEvent.KeyboardInputEvent.Pre event) {
+        IMEBridge.CompositionInfo info = compositionInfo;
+        if (info != null && info.isComposing) {
+            event.setCanceled(true);
+        }
     }
 
     // ============================================================
