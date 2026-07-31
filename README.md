@@ -91,6 +91,8 @@ passed through, always.
 
 [MIT](LICENSE)
 
+> Note: JNI implement see [here](https://github.com/song682/potential-C-JNI-IME-solutions)
+
 ---
 
 ## 中文
@@ -150,3 +152,5 @@ JAVA_HOME=/path/to/jdk8 ./gradlew build
 ### 许可
 
 [MIT](LICENSE)
+
+> JNI 的实现[见此](https://github.com/song682/potential-C-JNI-IME-solutions)
