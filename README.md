@@ -123,7 +123,7 @@ passed through, always.
 
 ### 前置与安装
 
-- Minecraft **1.7.10** + Forge 10.13.4，Java 8
+- Minecraft **1.7.10** + Forge 10.13.4，Java 8，UniMixins
 - **[CatFrame](https://github.com/song682/CatFrame) ≥ 0.5.0**（硬前置，
   提供 GUI 键盘事件桥与 Overlay 管理器）
 
