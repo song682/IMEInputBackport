@@ -38,26 +38,37 @@ public class IMEInoutBackport {
 
     /**
      * 从 Forge 配置（config/imeinput.cfg）读取 IME 后端模式。
-     * {@code general.backend = AUTO | TSF | IMM32}，默认 AUTO（先试 TSF，
-     * 失败静默降级 IMM32）；非法取值回退 AUTO 并记日志。
+     * {@code general.backend = AUTO | TSF | IMM32 | IBUS}，默认 AUTO（按平台
+     * 自动匹配：Windows 先试 TSF 失败降级 IMM32，Linux 恒走 IBUS）；
+     * TSF / IMM32 仅 Windows 生效，IBUS 仅 Linux 生效，跨平台取值被忽略
+     * （等同 AUTO）；非法取值回退 AUTO 并记日志。
      * Reads the IME backend mode from the Forge config (config/imeinput.cfg):
-     * {@code general.backend = AUTO | TSF | IMM32}, defaulting to AUTO (try TSF,
-     * silently fall back to IMM32); invalid values fall back to AUTO with a log.
+     * {@code general.backend = AUTO | TSF | IMM32 | IBUS}, defaulting to AUTO
+     * (platform-matched: Windows tries TSF then IMM32, Linux always IBus).
+     * TSF/IMM32 apply to Windows only and IBUS to Linux only — a value for the
+     * other platform degrades to AUTO; invalid values fall back with a log.
      *
      * @param config 已加载的 Forge 配置（调用方负责 load/save）
-     * @return {@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}
+     * @return {@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
+     *         {@code BACKEND_IMM32} / {@code BACKEND_IBUS}
      */
     private int loadBackendConfig(Configuration config) {
         String value = config.getString("backend", Configuration.CATEGORY_GENERAL, "AUTO",
-                "IME backend: AUTO = try TSF then fall back to IMM32; "
-                        + "TSF / IMM32 = force that backend. "
-                        + "IME 后端：AUTO = 先试 TSF 失败降级 IMM32；TSF / IMM32 = 强制指定后端。",
-                new String[] { "AUTO", "TSF", "IMM32" });
+                "IME backend: AUTO = match the platform (Windows: try TSF then fall back "
+                        + "to IMM32; Linux: IBus); TSF / IMM32 = force that backend (Windows "
+                        + "only); IBUS = force IBus (Linux only). "
+                        + "IME 后端：AUTO = 按平台自动匹配（Windows 先试 TSF 失败降级 IMM32，"
+                        + "Linux 走 IBus）；TSF / IMM32 = 强制指定后端（仅 Windows）；"
+                        + "IBUS = 强制 IBus（仅 Linux）。",
+                new String[] { "AUTO", "TSF", "IMM32", "IBUS" });
         if ("TSF".equalsIgnoreCase(value)) {
             return IMEBridge.BACKEND_TSF;
         }
         if ("IMM32".equalsIgnoreCase(value)) {
             return IMEBridge.BACKEND_IMM32;
+        }
+        if ("IBUS".equalsIgnoreCase(value)) {
+            return IMEBridge.BACKEND_IBUS;
         }
         if (!"AUTO".equalsIgnoreCase(value)) {
             logger.warn("[IME] Unknown backend '" + value + "' in imeinput.cfg, using AUTO");

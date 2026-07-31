@@ -12,6 +12,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraftforge.common.MinecraftForge;
 import org.jnilib.imeinput.IMEBridge;
+import org.lwjgl.input.Keyboard;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
@@ -55,14 +56,26 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     /** 光标底部的 GUI Y 坐标（候选窗紧贴其下方） */
     private volatile int caretGuiY = -1;
 
-    /** 已解析到的窗口句柄，0 表示尚未获取 */
+    /** 已解析到的窗口句柄（Windows 为 HWND，Linux 为 X Window），0 表示尚未获取 */
     private long hwnd = 0L;
+    /** Linux 下的 X {@code Display*} 指针值（随句柄解析一并取得）；Windows 恒为 0 */
+    private long xDisplay = 0L;
     /** 是否已完成子类化与回调注册 */
     private boolean installed = false;
     /** 上一次向本地层同步的 IME 使能状态 */
     private boolean lastImeEnabled = false;
     /** 是否已尝试过（失败）获取句柄，避免每 tick 刷屏日志 */
     private boolean handleLookupFailedLogged = false;
+    /** IBus 安装失败是否已记日志（保持每 tick 重试但只警告一次） */
+    private boolean ibusInstallFailedLogged = false;
+
+    /**
+     * 按键转发用：按下时记住每个 LWJGL 键码对应的 keysym，释放时原样回放。
+     * LWJGL2 的释放事件常不携带字符，若重新映射会丢失 Shift 变体（如 A/a）。
+     * Key-forwarding aid: remember the keysym per LWJGL key code at press time
+     * and replay it on release — LWJGL2 release events usually carry no char.
+     */
+    private final int[] pressedKeysyms = new int[256];
 
     /**
      * 配置的后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
@@ -284,30 +297,117 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     // ============================================================
 
     /**
-     * 组字期间吞掉屏幕键盘事件：订阅 CatFrame 回填的
-     * {@link CatFrameGuiEvent.KeyboardInputEvent.Pre}（发射自其
+     * 组字期间吞掉屏幕键盘事件，Linux 上额外承担按键→Rime 的转发：订阅
+     * CatFrame 回填的 {@link CatFrameGuiEvent.KeyboardInputEvent.Pre}（发射自其
      * {@code MixinGuiScreenEventBridge}，包裹 {@code GuiScreen.handleKeyboardInput()}
-     * 调用点），取消后整体跳过本次按键处理——原版 {@code keyTyped}（含 Esc 关屏）、
-     * CatFrame 拆分派发与全局按键派发均被压掉。这避免了组字中字母键被文本框
-     * 二次录入、Esc 与输入法"取消组字"语义打架直接关屏等问题；
+     * 调用点）。
+     * <p>
+     * Linux/IBus 路径：IME 激活时把当前 LWJGL 键盘事件映射为 X keysym 同步转发
+     * 给 Rime（{@link IMEBridge#processKey}），仅当 Rime 确实消费时才取消事件——
+     * 未消费（英文直输、无关键、空闲 Escape）一律放行，不会出现 Esc 被吞、
+     * 界面卡死的情况；未安装/未激活/非 IBus 后端时不碰事件。
+     * <p>
+     * 两平台公共兜底：组字进行中无条件取消——原版 {@code keyTyped}（含 Esc
+     * 关屏）、CatFrame 拆分派发与全局按键派发均被压掉，避免组字中字母键被
+     * 文本框二次录入、Esc 与输入法“取消组字”语义打架直接关屏等问题；
      * 组字结束后按键照常放行，不影响英文直输。
-     * Swallows screen keyboard events while composing: subscribes to CatFrame's
-     * backfilled {@link CatFrameGuiEvent.KeyboardInputEvent.Pre} (fired from its
-     * {@code MixinGuiScreenEventBridge} wrapping the {@code handleKeyboardInput()}
-     * call site). Canceling skips the whole per-key handling — vanilla
-     * {@code keyTyped} (incl. Esc-to-close), CatFrame's split dispatch and the
-     * global key dispatch — preventing double letter input into the text field
-     * and the Esc fight between "close screen" and the IME's "cancel composition".
-     * Keys pass through normally when not composing, so direct English typing
-     * is unaffected.
+     * Swallows screen keyboard events while composing; on Linux additionally
+     * forwards keys to Rime via the IBus backend, canceling the event only
+     * when the IME actually consumed the key — unhandled keys (direct English,
+     * idle Escape) always pass through, so the screen can never get stuck.
      *
      * @param event CatFrame 键盘事件（Pre，可取消）
      */
     @SubscribeEvent
     public void onGuiKeyboardPre(CatFrameGuiEvent.KeyboardInputEvent.Pre event) {
+        if (forwardKeyToIbus()) {
+            event.setCanceled(true);
+            return;
+        }
         IMEBridge.CompositionInfo info = compositionInfo;
         if (info != null && info.isComposing) {
             event.setCanceled(true);
+        }
+    }
+
+    /**
+     * Linux/IBus 按键转发：把当前 LWJGL 键盘事件（含释放——Rime 靠 Shift
+     * 单击释放切中英文）映射为 X keysym 后同步送入输入法。
+     * Forwards the current LWJGL keyboard event (incl. releases — Rime toggles
+     * ascii mode on a bare Shift release) to the IME as an X keysym.
+     *
+     * @return true 表示输入法已消费该键，调用方应取消事件
+     */
+    private boolean forwardKeyToIbus() {
+        if (!installed || !lastImeEnabled
+                || IMEBridge.getActiveBackend() != IMEBridge.BACKEND_IBUS) {
+            return false;
+        }
+        int key = Keyboard.getEventKey() & 0xFF;
+        boolean press = Keyboard.getEventKeyState();
+        int keysym;
+        if (press) {
+            keysym = keysymFromEvent(key, Keyboard.getEventCharacter());
+            pressedKeysyms[key] = keysym;
+        } else {
+            // 释放：回放按下时记录的 keysym（释放事件通常不携带字符）
+            // Release: replay the keysym remembered at press time
+            keysym = pressedKeysyms[key];
+            pressedKeysyms[key] = 0;
+        }
+        if (keysym == 0) {
+            // 无法映射的键（F1…/功能键）直接放行 / Unmappable keys pass through
+            return false;
+        }
+        int state = 0;
+        if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT)
+                || keysym == 0xffe1 || keysym == 0xffe2) {
+            state |= 1;       // ShiftMask
+        }
+        if (Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL)) {
+            state |= 1 << 2;  // ControlMask
+        }
+        if (Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU)) {
+            state |= 1 << 3;  // Mod1Mask (Alt)
+        }
+        return IMEBridge.processKey(keysym, state, !press);
+    }
+
+    /**
+     * LWJGL 键盘事件 → X11 keysym：特殊键查表（0xffXX），可打印 ASCII
+     * 直接用码点（X11 Latin-1 keysym 与 ASCII 同值），其余返回 0 表示不转发。
+     * LWJGL event -> X11 keysym: table for special keys, codepoint for
+     * printable ASCII (Latin-1 keysyms equal ASCII), 0 = don't forward.
+     *
+     * @param key LWJGL 键码
+     * @param ch  事件字符（按下时有效）
+     * @return X keysym；0 表示无法映射
+     */
+    private static int keysymFromEvent(int key, char ch) {
+        switch (key) {
+            case Keyboard.KEY_RETURN:      return 0xff0d;
+            case Keyboard.KEY_NUMPADENTER: return 0xff8d;
+            case Keyboard.KEY_BACK:        return 0xff08;
+            case Keyboard.KEY_TAB:         return 0xff09;
+            case Keyboard.KEY_ESCAPE:      return 0xff1b;
+            case Keyboard.KEY_DELETE:      return 0xffff;
+            case Keyboard.KEY_HOME:        return 0xff50;
+            case Keyboard.KEY_LEFT:        return 0xff51;
+            case Keyboard.KEY_UP:          return 0xff52;
+            case Keyboard.KEY_RIGHT:       return 0xff53;
+            case Keyboard.KEY_DOWN:        return 0xff54;
+            case Keyboard.KEY_PRIOR:       return 0xff55;
+            case Keyboard.KEY_NEXT:        return 0xff56;
+            case Keyboard.KEY_END:         return 0xff57;
+            case Keyboard.KEY_LSHIFT:      return 0xffe1;
+            case Keyboard.KEY_RSHIFT:      return 0xffe2;
+            case Keyboard.KEY_LCONTROL:    return 0xffe3;
+            case Keyboard.KEY_RCONTROL:    return 0xffe4;
+            case Keyboard.KEY_LMENU:       return 0xffe9;
+            case Keyboard.KEY_RMENU:       return 0xffea;
+            default:
+                // 可打印 ASCII：keysym 即码点 / Printable ASCII: keysym == codepoint
+                return ch >= 0x20 && ch < 0x7f ? ch : 0;
         }
     }
 
@@ -325,6 +425,10 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         if (!installed) {
             return;
         }
+
+        // IBus 后端：泵送异步到达的信号（面板翻页、引擎异步更新等）；
+        // 非 IBus 后端内部直接返回。/ Pump pending IBus signals; no-op elsewhere.
+        IMEBridge.pump();
 
         Minecraft mc = Minecraft.getMinecraft();
 
@@ -357,7 +461,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
     }
 
-    /** 延迟安装：获取句柄、安装后端（TSF 或 IMM32）、注册回调 */
+    /** 延迟安装：获取句柄、安装后端（TSF / IMM32 / IBus）、注册回调 */
     private void ensureInstalled() {
         if (installed) {
             return;
@@ -369,10 +473,22 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             return;
         }
         IMEBridge.setCallback(this);
-        // 安装前同步候选条归属：TSF 路径在安装时据此选择激活模式
-        // Sync candidate bar ownership before install (TSF activation-mode decision)
+        // 安装前同步候选条归属：TSF 路径在安装时据此选择激活模式，
+        // IBus 路径据此决定是否声明 CAP_LOOKUP_TABLE
+        // Sync candidate bar ownership before install (TSF activation / IBus caps)
         IMEBridge.setNativeCandidateBar(nativeCandidateBar);
-        int backend = IMEBridge.install(hwnd, backendMode);
+        int backend = IMEBridge.install(xDisplay, hwnd, backendMode);
+        if (backend == IMEBridge.BACKEND_NONE) {
+            // Linux：ibus 连接失败（未运行/地址不可解析），后续 tick 重试，只警告一次
+            // Linux: ibus connect failed (not running / no address); retry later, warn once
+            if (!ibusInstallFailedLogged) {
+                IMEInoutBackport.logger.warn(
+                        "[IME] IBus backend install failed (is ibus-daemon running?), will retry");
+                ibusInstallFailedLogged = true;
+            }
+            IMEBridge.clearCallback();
+            return;
+        }
         // 初始状态禁用 IME，待聚焦文本框时再启用
         IMEBridge.setEnabled(hwnd, false);
         lastImeEnabled = false;
@@ -456,7 +572,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             return true;
         }
         IMEBridge.uninstall(hwnd);
-        int backend = IMEBridge.install(current, backendMode);
+        int backend = IMEBridge.install(xDisplay, current, backendMode);
         IMEBridge.setEnabled(current, false);
         IMEInoutBackport.logger.info("[IME] Game window recreated, rehooked hwnd "
                 + hwnd + " -> " + current);
@@ -518,13 +634,32 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     // ============================================================
 
     /**
-     * 反射获取 LWJGL 游戏窗口句柄。
-     * {@code org.lwjgl.opengl.WindowsDisplay.current_display}（static）→ {@code hwnd}（private long）。
+     * 反射获取 LWJGL 游戏窗口句柄（按平台分支）。
+     * Windows：{@code org.lwjgl.opengl.WindowsDisplay.current_display}（static）
+     * → {@code hwnd}（private long）；
+     * Linux：{@code org.lwjgl.opengl.LinuxDisplay.getDisplay()/getWindow()}
+     * （package-private static long），Display 指针顺带存入 {@link #xDisplay}。
+     * Resolves the LWJGL window handle per platform; on Linux the X Display
+     * pointer is captured into {@link #xDisplay} as a side effect.
      *
-     * @return 窗口句柄，失败返回 0
+     * @return 窗口句柄（HWND / X Window），失败返回 0
      */
     private long resolveHwnd() {
         try {
+            if (IMEBridge.isLinux()) {
+                Class<?> ld = Class.forName("org.lwjgl.opengl.LinuxDisplay");
+                java.lang.reflect.Method getDisplay = ld.getDeclaredMethod("getDisplay");
+                getDisplay.setAccessible(true);
+                java.lang.reflect.Method getWindow = ld.getDeclaredMethod("getWindow");
+                getWindow.setAccessible(true);
+                long display = ((Long) getDisplay.invoke(null)).longValue();
+                long window = ((Long) getWindow.invoke(null)).longValue();
+                if (display == 0L || window == 0L) {
+                    return 0L;
+                }
+                xDisplay = display;
+                return window;
+            }
             Class<?> wd = Class.forName("org.lwjgl.opengl.WindowsDisplay");
             Field curField = wd.getDeclaredField("current_display");
             curField.setAccessible(true);

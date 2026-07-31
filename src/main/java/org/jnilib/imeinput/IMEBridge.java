@@ -25,32 +25,40 @@ public class IMEBridge {
     }
 
     /**
-     * 从模组 jar 中提取并加载与当前架构匹配的本地库。
+     * 从模组 jar 中提取并加载与当前平台/架构匹配的本地库。
      * <p>
-     * 依据 {@code os.arch} 决定候选 DLL 的尝试顺序，并把全部三份 DLL 作为兜底依次尝试——
-     * 架构不匹配的 DLL 在 {@link System#load(String)} 阶段自然失败并被跳过，从而无需精确
-     * 解析五花八门的 {@code os.arch} 取值（amd64/x86_64/aarch64/arm64 等）。
-     * Extracts and loads the arch-matching native library bundled in the mod jar;
-     * candidates are ordered by {@code os.arch} with all three tried as fallback.
+     * Linux 上直接加载 {@code libJNILibIMEInput-linux-x64.so}（IBus 后端）；
+     * Windows 上依据 {@code os.arch} 决定候选 DLL 的尝试顺序，并把全部三份 DLL
+     * 作为兑底依次尝试——架构不匹配的 DLL 在 {@link System#load(String)} 阶段
+     * 自然失败并被跳过，从而无需精确解析五花八门的 {@code os.arch} 取值
+     * （amd64/x86_64/aarch64/arm64 等）。
+     * Extracts and loads the platform/arch-matching native library bundled in
+     * the mod jar; Linux loads the IBus backend .so, Windows orders the DLL
+     * candidates by {@code os.arch} with all three tried as fallback.
      */
     private static void loadNativeLibrary() {
-        String arch = System.getProperty("os.arch", "").toLowerCase();
         java.util.List<String> candidates = new java.util.ArrayList<String>();
-        if (arch.contains("64")) {
-            // 64 位：ARM64 优先匹配 arm64，其余 64 位归为 x64 / On 64-bit, prefer arm64 for ARM, else x64
-            if (arch.contains("aarch") || arch.contains("arm")) {
-                candidates.add("JNILibIMEInput-arm64.dll");
-            }
-            candidates.add("JNILibIMEInput-x64.dll");
+        if (isLinux()) {
+            // Linux：目前仅产出 x64（arm64 待有环境时交叉编译）/ linux-x64 only for now
+            candidates.add("libJNILibIMEInput-linux-x64.so");
         } else {
-            // 32 位 / 32-bit
-            candidates.add("JNILibIMEInput-x86.dll");
-        }
-        // 兜底：确保三份 DLL 都被尝试，规避 os.arch 取值差异 / Ensure all three are attempted
-        for (String name : new String[] {
-                "JNILibIMEInput-x64.dll", "JNILibIMEInput-x86.dll", "JNILibIMEInput-arm64.dll" }) {
-            if (!candidates.contains(name)) {
-                candidates.add(name);
+            String arch = System.getProperty("os.arch", "").toLowerCase();
+            if (arch.contains("64")) {
+                // 64 位：ARM64 优先匹配 arm64，其余 64 位归为 x64 / On 64-bit, prefer arm64 for ARM, else x64
+                if (arch.contains("aarch") || arch.contains("arm")) {
+                    candidates.add("JNILibIMEInput-arm64.dll");
+                }
+                candidates.add("JNILibIMEInput-x64.dll");
+            } else {
+                // 32 位 / 32-bit
+                candidates.add("JNILibIMEInput-x86.dll");
+            }
+            // 兑底：确保三份 DLL 都被尝试，规避 os.arch 取值差异 / Ensure all three are attempted
+            for (String name : new String[] {
+                    "JNILibIMEInput-x64.dll", "JNILibIMEInput-x86.dll", "JNILibIMEInput-arm64.dll" }) {
+                if (!candidates.contains(name)) {
+                    candidates.add(name);
+                }
             }
         }
         for (String name : candidates) {
@@ -59,14 +67,16 @@ public class IMEBridge {
             }
         }
         throw new UnsatisfiedLinkError(
-                "JNILibIMEInput: no matching native library for os.arch=" + arch);
+                "JNILibIMEInput: no matching native library for os.name="
+                        + System.getProperty("os.name", "")
+                        + " os.arch=" + System.getProperty("os.arch", ""));
     }
 
     /**
      * 把指定 classpath 资源释放到临时文件并尝试加载。
      * Extracts the given classpath resource to a temp file and tries to load it.
      *
-     * @param resourceName jar 内 DLL 资源名（位于 classpath 根目录）
+     * @param resourceName jar 内本地库资源名（位于 classpath 根目录）
      * @return 加载成功返回 true；资源不存在、架构不匹配或加载失败返回 false
      */
     private static boolean tryExtractAndLoad(String resourceName) {
@@ -76,7 +86,9 @@ public class IMEBridge {
             return false;
         }
         try {
-            java.io.File tmp = java.io.File.createTempFile("JNILibIMEInput-", ".dll");
+            // 临时文件后缀跟随资源（.dll / .so）/ Temp suffix follows the resource
+            String suffix = resourceName.endsWith(".so") ? ".so" : ".dll";
+            java.io.File tmp = java.io.File.createTempFile("JNILibIMEInput-", suffix);
             tmp.deleteOnExit();
             java.io.OutputStream out = new java.io.FileOutputStream(tmp);
             try {
@@ -113,11 +125,23 @@ public class IMEBridge {
     public static final int BACKEND_TSF = 1;
     /** 强制 IMM32 子类化后端 / Force the IMM32 subclass backend */
     public static final int BACKEND_IMM32 = 2;
+    /** IBus D-Bus 直连后端（Linux 唯一后端）/ IBus D-Bus backend (Linux-only) */
+    public static final int BACKEND_IBUS = 3;
     /** 未安装 / Not installed */
     public static final int BACKEND_NONE = -1;
 
     /** 当前激活后端；仅在游戏主线程读写 / Active backend; main-thread only */
     private static int activeBackend = BACKEND_NONE;
+
+    /**
+     * 当前是否运行在 Linux 上（决定后端编排与本地库选择）。
+     * Whether we are on Linux (drives backend orchestration and library choice).
+     *
+     * @return true 表示 Linux
+     */
+    public static boolean isLinux() {
+        return System.getProperty("os.name", "").toLowerCase().contains("linux");
+    }
 
     /**
      * 按配置模式在游戏窗口上安装 IME 后端。
@@ -132,14 +156,37 @@ public class IMEBridge {
      * @return 实际激活的后端（{@link #BACKEND_TSF} 或 {@link #BACKEND_IMM32}），供日志输出
      */
     public static int install(long hwnd, int mode) {
+        return install(0L, hwnd, mode);
+    }
+
+    /**
+     * 平台统一安装入口。Linux 上忽略 mode 恒走 IBus D-Bus 直连
+     * （AUTO/TSF/IMM32 配置值被忽略，安装失败保持 NONE 下个 tick 重试）；
+     * Windows 上 display 参数无意义（传 0），window 即 HWND，行为同两参重载。
+     * Unified per-platform install entry: Linux ignores mode and always goes
+     * IBus (failure keeps NONE so the caller retries next tick); on Windows
+     * display is unused (0) and window is the HWND.
+     *
+     * @param display Linux 上为 X {@code Display*} 指针值；Windows 传 0
+     * @param window  Linux 上为 X {@code Window}；Windows 上为 HWND
+     * @param mode    后端模式（仅 Windows 生效）
+     * @return 实际激活的后端；Linux 安装失败时返回 {@link #BACKEND_NONE}
+     */
+    public static int install(long display, long window, int mode) {
         if (activeBackend != BACKEND_NONE) {
             return activeBackend;
         }
-        if (mode != BACKEND_IMM32 && nativeTsfInstall(hwnd)) {
+        if (isLinux()) {
+            if (nativeIbusInstall(display, window)) {
+                activeBackend = BACKEND_IBUS;
+            }
+            return activeBackend;
+        }
+        if (mode != BACKEND_IMM32 && nativeTsfInstall(window)) {
             activeBackend = BACKEND_TSF;
         } else {
             // TSF 失败或强制 IMM32：走现有子类化路径 / TSF failed or forced IMM32
-            subclassWindow(hwnd);
+            subclassWindow(window);
             activeBackend = BACKEND_IMM32;
         }
         return activeBackend;
@@ -149,13 +196,15 @@ public class IMEBridge {
      * 卸载当前激活的后端（窗口重建/重挂前调用）。未安装时无副作用。
      * Uninstalls the active backend (called before window rebuild/rehook).
      *
-     * @param hwnd 窗口句柄（IMM32 路径需要；TSF 路径忽略）
+     * @param hwnd 窗口句柄（IMM32 路径需要；TSF / IBus 路径忽略）
      */
     public static void uninstall(long hwnd) {
         if (activeBackend == BACKEND_TSF) {
             nativeTsfUninstall();
         } else if (activeBackend == BACKEND_IMM32) {
             unsubclassWindow(hwnd);
+        } else if (activeBackend == BACKEND_IBUS) {
+            nativeIbusUninstall();
         }
         activeBackend = BACKEND_NONE;
     }
@@ -163,10 +212,10 @@ public class IMEBridge {
     /**
      * 按激活后端分发的 IME 使能开关。
      * TSF → {@link #nativeTsfSetEnabled}（AssociateFocus 切换真实/空文档）；
-     * IMM32 → 现有 {@link #setImeEnabled}。
+     * IMM32 → 现有 {@link #setImeEnabled}；IBus → FocusIn / Reset+FocusOut。
      * Backend-dispatched IME enable switch.
      *
-     * @param hwnd    窗口句柄
+     * @param hwnd    窗口句柄（IBus 路径忽略）
      * @param enabled true 启用中日韩输入，false 强制英文
      */
     public static void setEnabled(long hwnd, boolean enabled) {
@@ -174,16 +223,19 @@ public class IMEBridge {
             nativeTsfSetEnabled(enabled);
         } else if (activeBackend == BACKEND_IMM32) {
             setImeEnabled(hwnd, enabled);
+        } else if (activeBackend == BACKEND_IBUS) {
+            nativeIbusSetEnabled(enabled);
         }
     }
 
     /**
      * 按激活后端分发的候选/组字窗定位（窗口客户区像素坐标）。
      * TSF → {@link #nativeTsfSetCaretPos}（由 {@code GetTextExt} 交给输入法）；
-     * IMM32 → 现有 {@link #setCandidatePos}。
+     * IMM32 → 现有 {@link #setCandidatePos}；IBus → SetCursorLocation
+     * （本地层经 X 坐标换算为屏幕坐标，供系统面板摆放候选窗）。
      * Backend-dispatched candidate/composition window positioning.
      *
-     * @param hwnd 窗口句柄
+     * @param hwnd 窗口句柄（IBus 路径忽略）
      * @param x    客户区 X（像素）
      * @param y    客户区 Y（像素，通常为光标底部）
      */
@@ -192,7 +244,44 @@ public class IMEBridge {
             nativeTsfSetCaretPos(x, y);
         } else if (activeBackend == BACKEND_IMM32) {
             setCandidatePos(hwnd, x, y);
+        } else if (activeBackend == BACKEND_IBUS) {
+            nativeIbusSetCaretPos(x, y);
         }
+    }
+
+    /**
+     * 泵送并派发已到达的 IBus 信号（preedit/候选/提交回调在此期间触发）。
+     * 仅 IBus 后端有效；每客户端 tick 调用一次，非阻塞。
+     * Pumps and dispatches pending IBus signals (callbacks fire inside);
+     * IBus-only, called once per client tick, non-blocking.
+     */
+    public static void pump() {
+        if (activeBackend == BACKEND_IBUS) {
+            nativeIbusPump();
+        }
+    }
+
+    /**
+     * 把按键同步转发给输入法（仅 IBus 后端）。返回后本地层已顺带 pump
+     * 一轮，preedit/候选更新与按键同帧可见。非 IBus 后端恒返回 false。
+     * Forwards a key event to the IME synchronously (IBus-only); the native
+     * layer pumps once before returning so preedit updates land same-frame.
+     * Always false on non-IBus backends.
+     *
+     * @param keysym  X11 keysym（可打印 ASCII 即码点，特殊键 0xffXX）
+     * @param state   修饰位（Shift=1<<0、Ctrl=1<<2、Alt=1<<3）
+     * @param release true 表示按键释放（本地层叠加 IBus 释放位 1<<30）
+     * @return true 表示输入法已消费该键，调用方应吞掉事件
+     */
+    public static boolean processKey(int keysym, int state, boolean release) {
+        if (activeBackend != BACKEND_IBUS) {
+            return false;
+        }
+        if (release) {
+            // IBus 释放位 / IBus release modifier bit
+            state |= 1 << 30;
+        }
+        return nativeIbusProcessKey(keysym, 0, state);
     }
 
     /**
@@ -231,9 +320,68 @@ public class IMEBridge {
             case BACKEND_AUTO:  return "AUTO";
             case BACKEND_TSF:   return "TSF";
             case BACKEND_IMM32: return "IMM32";
+            case BACKEND_IBUS:  return "IBUS";
             default:            return "NONE";
         }
     }
+
+    // ============================================================
+    //  IBus 后端 native（由 ibus_bridge.c 实现，仅 Linux .so 提供）
+    //  IBus backend natives (implemented in ibus_bridge.c, Linux .so only)
+    // ============================================================
+
+    /**
+     * 连接 ibus 私有总线并创建 InputContext。安装链（连接→Hello→
+     * CreateInputContext→SetCapabilities→信号监听）任一步失败即整体回滚
+     * 返回 false，不抛异常。
+     * Connects to the private ibus bus and creates the InputContext;
+     * full rollback + false on any failure.
+     *
+     * @param display X {@code Display*} 指针值（坐标换算用，可为 0）
+     * @param window  X {@code Window}（坐标换算用，可为 0）
+     * @return 安装成功返回 true
+     */
+    private static native boolean nativeIbusInstall(long display, long window);
+
+    /** 断开 ibus 连接并释放全部状态。/ Disconnects and releases all IBus state. */
+    private static native void nativeIbusUninstall();
+
+    /**
+     * IBus 路径的 IME 使能开关：true → FocusIn；false → Reset + FocusOut
+     * 并主动回调空组字/空候选清掉 Java 侧残留预览。
+     * IBus-path enable switch: FocusIn vs Reset+FocusOut with a proactive
+     * empty-state callback to clear stale previews.
+     *
+     * @param enabled true 允许组字，false 禁用输入法
+     */
+    private static native void nativeIbusSetEnabled(boolean enabled);
+
+    /**
+     * 上报光标位置（窗口客户区像素）：经 {@code XTranslateCoordinates}
+     * 转屏幕坐标后 SetCursorLocation，系统面板据此摆放候选窗。
+     * Reports the caret (client-area pixels), translated to screen coords
+     * for the system panel's candidate window placement.
+     *
+     * @param x 客户区 X（像素）
+     * @param y 客户区 Y（像素）
+     */
+    private static native void nativeIbusSetCaretPos(int x, int y);
+
+    /**
+     * 同步 ProcessKeyEvent（超时约 100ms，超时按未处理放行）；
+     * 返回前顺带 pump 一轮使 preedit 同帧生效。
+     * Synchronous ProcessKeyEvent (~100ms timeout, treated as unhandled);
+     * pumps once before returning for same-frame preedit updates.
+     *
+     * @param keyval  X11 keysym
+     * @param keycode 硬件扫描码（未知传 0，Rime 不依赖）
+     * @param state   修饰位（含释放位 1<<30）
+     * @return true 表示输入法已消费该键
+     */
+    private static native boolean nativeIbusProcessKey(int keyval, int keycode, int state);
+
+    /** 非阻塞派发已到达的 D-Bus 消息。/ Non-blocking dispatch of pending messages. */
+    private static native void nativeIbusPump();
 
     // ============================================================
     //  TSF 后端 native（由 tsf_bridge.cpp 实现）
