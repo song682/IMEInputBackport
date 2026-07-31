@@ -40,9 +40,10 @@ manual setup. The Linux backend binds `libdbus-1.so.3` at runtime via
 
 ### Requirements
 
+[CatFrame](https://github.com/song682/CatFrame) for the hard prerequisites for the overlay system and the keyboard event.     
+UniMixins for the mixin requirements.    
+Forge 1.7.10-1614 + Java 8 
 
-
-Qoder
 ### Installation
 
 Drop the IMEInputBackport jar and CatFrame into your `mods/` folder. Done.
@@ -153,4 +154,4 @@ JAVA_HOME=/path/to/jdk8 ./gradlew build
 
 [MIT](LICENSE)
 
-> JNI 的实现[见此](https://github.com/song682/potential-C-JNI-IME-solutions)
+> JNI 原生库的实现[见此](https://github.com/song682/potential-C-JNI-IME-solutions)
