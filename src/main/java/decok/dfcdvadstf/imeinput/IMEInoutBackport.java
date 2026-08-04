@@ -4,7 +4,8 @@ import cpw.mods.fml.common.Loader;
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.Mod.EventHandler;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
-import decok.dfcdvadstf.imeinput.compat.NEICompat;
+import decok.dfcdvadstf.imeinput.compat.NEICompact;
+import decok.dfcdvadstf.imeinput.compat.EMICompact;
 import net.minecraftforge.common.config.Configuration;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -14,7 +15,7 @@ import org.jnilib.imeinput.IMEBridge;
 // CatFrame 为硬前置：自绘 IME 组词窗接入其 Overlay 体系。
 // NEI (official or GTNH fork) is optional: commit injection routes through its key pipeline.
 // NEI（官方版或 GTNH 非官方版）为可选：提交注入经其按键管线路由。
-@Mod(modid = Tags.MODID, name = Tags.NAME, version = Tags.VERSION, useMetadata = true, dependencies = "required-after:catframe@[0.5.8,);after:NotEnoughItems")
+@Mod(modid = Tags.MODID, name = Tags.NAME, version = Tags.VERSION, useMetadata = true, dependencies = "required-after:catframe@[0.5.8,);after:NotEnoughItems;after:emi@[1.1.24-beta1,)")
 public class IMEInoutBackport {
     public static Logger logger = LogManager.getLogger(Tags.NAME);
 
@@ -37,8 +38,9 @@ public class IMEInoutBackport {
             }
             IMEHandler.init(mode, nativeBar);
             // Register built-in IME commit targets (NEI search/quantity box).
-            // 注册内置 IME 提交目标（NEI 搜索框/数量框；未装 NEI 时为空操作）。
-            NEICompat.register();
+            // 注册内置 IME 提交目标（NEI/EMI 搜索框/数量框；未装 NEI/EMI 时为空操作）。
+            NEICompact.register();
+            EMICompact.register();
         }
         if (Loader.isModLoaded("ingameime"))
             throw new RuntimeException("IngameIME is detected, the duplicate IME backend is not allowed.");

@@ -91,17 +91,25 @@ dependencies {
         implementation "curse.maven:MysteriumLib-645051:3963822"
     }
 
-        // NEI is compileOnly: the jar the mod runs against comes from the mods folder
-        // (GTNH fork; mutually exclusive with the other recipe-viewer mods), and the
-        // compat layer only touches it when loaded.
-        // NEI 仅为编译期依赖：运行时 jar 来自 mods 目录（GTNH 非官方版，与另两个
-        // 配方查看器模组互斥），兼容层仅在检测到加载时触碰其类。
-        compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
-        compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
-        compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
+    // NEI is compileOnly: the jar the mod runs against comes from the mods folder
+    // (GTNH fork; mutually exclusive with the other recipe-viewer mods), and the
+    // compat layer only touches it when loaded.
+    // NEI 仅为编译期依赖：运行时 jar 来自 mods 目录（GTNH 非官方版，与另两个
+    // 配方查看器模组互斥），兼容层仅在检测到加载时触碰其类。
+    compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
+    compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
+    compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
+
+    // EMI is compileOnly too: the RetroEMI Forge port jar lives in lib/ and the
+    // runtime copy comes from the mods folder; the compat layer only touches it
+    // when loaded. A plain fileTree would be invisible to IDE classpath models.
+    // EMI 同样仅为编译期依赖：RetroEMI Forge 移植版 jar 位于 lib/，运行时副本
+    // 来自 mods 目录；兼容层仅在检测到加载时触碰其类。显式声明（而非 fileTree）
+    // 保证 IDE 类路径模型能解析。
+    compileOnly files('lib/emi-1.1.24-beta1+1.7.10+forge-dev.jar')
+    implementation fileTree(dir: 'lib', includes: ['*.jar'])
 
     implementation "com.github.song682:CatFrame:v0.5.8-hotfix"
-    implementation fileTree(dir: 'lib', includes: ['*.jar'])
 }
 
 def dependenciesList = []

@@ -17,12 +17,12 @@ simply live outside the `GuiTextField` family.
 
 An interface with one mandatory method and a couple of optional ones:
 
-| Method | Kind | What it's for |
-|---|---|---|
-| `boolean isActive()` | required | Drives the IME switch and commit routing. Return `true` when your control should receive IME input right now — normally that's just "my control has focus". Polled once per client tick. |
-| `void commitText(String text)` | required | Receives the committed text **as a whole**. You decide how to get it into your control — char-by-char key injection or a bulk insert — as long as your own refresh logic fires, same as manual input. |
-| `int getCaretX()` | optional (default `-1`) | Candidate-window anchor X in GUI coordinates. `-1` means "no opinion", let the mod fall back. |
-| `int getCaretY()` | optional (default `-1`) | Candidate-window anchor Y, GUI coordinates, **below** the caret. Same fallback rule. |
+| Method                         | Kind                    | What it's for                                                                                                                                                                                         |
+| ------------------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boolean isActive()`           | required                | Drives the IME switch and commit routing. Return `true` when your control should receive IME input right now — normally that's just "my control has focus". Polled once per client tick.              |
+| `void commitText(String text)` | required                | Receives the committed text **as a whole**. You decide how to get it into your control — char-by-char key injection or a bulk insert — as long as your own refresh logic fires, same as manual input. |
+| `int getCaretX()`              | optional (default `-1`) | Candidate-window anchor X in GUI coordinates. `-1` means "no opinion", let the mod fall back.                                                                                                         |
+| `int getCaretY()`              | optional (default `-1`) | Candidate-window anchor Y, GUI coordinates, **below** the caret. Same fallback rule.                                                                                                                  |
 
 That's the whole contract. No base class to extend, no events to wire, no
 state to keep in sync — the mod does all the plumbing.

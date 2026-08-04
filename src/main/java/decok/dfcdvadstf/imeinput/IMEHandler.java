@@ -7,7 +7,7 @@ import decok.dfcdvadstf.catframe.compact.forge.event.CatFrameGuiEvent;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
 import decok.dfcdvadstf.imeinput.api.IMECommitTarget;
 import decok.dfcdvadstf.imeinput.api.IMEInputAPI;
-import decok.dfcdvadstf.imeinput.compat.NEICompat;
+import decok.dfcdvadstf.imeinput.compat.NEICompact;
 import decok.dfcdvadstf.imeinput.gui.IMEOverlay;
 import decok.dfcdvadstf.imeinput.gui.IMETheme;
 import net.minecraft.client.Minecraft;
@@ -214,9 +214,9 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     /**
      * 当前聚焦的文本框（Mixin 追踪的实例；可能为 null）。
-     * 供 IME 提交目标（如 {@link NEICompat}）与聚焦文本框对照判定使用。
+     * 供 IME 提交目标（如 {@link NEICompact}）与聚焦文本框对照判定使用。
      * The currently focused text field tracked by the Mixin (may be null);
-     * used by IME commit targets (e.g. {@link NEICompat}) for cross-checks.
+     * used by IME commit targets (e.g. {@link NEICompact}) for cross-checks.
      *
      * @return 聚焦文本框；无则 null
      */

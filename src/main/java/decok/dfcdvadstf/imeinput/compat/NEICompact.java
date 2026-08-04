@@ -64,17 +64,17 @@ import java.lang.reflect.Field;
  * when
  * NEI is absent.
  */
-public final class NEICompat implements IMECommitTarget {
+public final class NEICompact implements IMECommitTarget {
 
     /** 单例：注册进 {@link IMEInputAPI} 的实例 */
-    private static final NEICompat INSTANCE = new NEICompat();
+    private static final NEICompact INSTANCE = new NEICompact();
 
     /** {@code TextField.field}（protected GuiTextField）反射句柄；null 表示未解析或解析失败 */
     private static Field textFieldField = null;
     /** 是否已完成字段解析（防止反复抛异常） */
     private static boolean fieldLookupDone = false;
 
-    private NEICompat() {
+    private NEICompact() {
     }
 
     /**
