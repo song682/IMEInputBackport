@@ -112,7 +112,6 @@ dependencies {
     implementation "com.github.song682:CatFrame:v0.5.8-hotfix"
 }
 
-
 def dependenciesList = []
 if (!project.modDependencies.isEmpty()) dependenciesList.add(project.modDependencies)
 if (project.enableUsingMysteriumLib.toBoolean()) dependenciesList.add("\"required-after:MysteriumLib\"")
@@ -151,10 +150,10 @@ def extractTagsFromJava() {
     }
 
     return [
-            version: versionMatcher.group(1),
-            name   : nameMatcher.find() ? nameMatcher.group(1) : null,
-            modid  : modidMatcher.find() ? modidMatcher.group(1) : null,
-            path   : tagsFile.path
+        version: versionMatcher.group(1),
+        name   : nameMatcher.find() ? nameMatcher.group(1) : null,
+        modid  : modidMatcher.find() ? modidMatcher.group(1) : null,
+        path   : tagsFile.path
     ]
 }
 
@@ -297,6 +296,19 @@ artifacts {
     archives sourcesJar
 }
 
+// JitPack builds publish through maven-publish, and Gradle 6+ would emit a
+// Gradle Module Metadata file (IMEInputBackport-<ver>.module) alongside the
+// pom. Legacy resolvers (incl. the GTNH build environment) treat that file as
+// a module and fail to load it, so metadata generation is disabled — the pom
+// alone is enough for a Minecraft mod dependency.
+// JitPack 构建经 maven-publish 发布，Gradle 6+ 默认会在 pom 旁生成 Gradle
+// Module Metadata 文件（IMEInputBackport-<ver>.module）。旧版解析器（含 GTNH
+// 构建环境）会把该文件当作模块导致加载错误，故禁用其生成——对 Minecraft
+// 模组依赖而言，仅有 pom 即可。
+tasks.withType(GenerateModuleMetadata) {
+    enabled = false
+}
+
 if (project.include_license.toBoolean()){
     jar {
         from file("./LICENSE")
@@ -307,10 +319,6 @@ if (project.include_license.toBoolean()){
     sourcesJar {
         from file("./LICENSE")
     }
-}
-
-tasks.withType(GenerateModuleMetadata) {
-    enabled = false
 }
 
 publishing {

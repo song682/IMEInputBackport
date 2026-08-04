@@ -106,7 +106,7 @@ it has its own `focused` flag and a vanilla-style `keyTyped(char, int)`, so
 
 ## Built-in targets
 
-The mod registers one target itself: **`NEICompat`**, for the NEI search and
+The mod registers two targets itself. **`NEICompat`** covers the NEI search and
 quantity boxes (official or GTNH fork). It registers at preInit when NEI is
 loaded, and its `isActive()` is deliberately strict — it only claims commits
 when you're on a container screen, NEI's focused widget is a `TextField`, and
@@ -115,6 +115,19 @@ last check is what keeps a mod's own text field inside a container (say, an
 AE terminal search) from being hijacked by NEI's pipeline. Commits are fed
 char-by-char through `GuiContainerManager.keyTyped` so NEI's `onTextChange`
 refreshes the search — a plain `writeText` would silently skip that.
+
+**`EMICompact`** covers the EMI search box (RetroEMI Forge port). It registers
+at preInit when EMI is loaded, and `isActive()` requires an EMI-hosted screen
+(container or the EMI recipe browser, per `EmiScreenBase`) with the search box
+input-ready (`TextFieldWidget.isActive()`: visible + focused + editable). The
+EMI search box manages its own focus and is not a vanilla `GuiTextField`, so
+no Mixin cross-check is needed — EMI clears the search-box focus on clicking
+elsewhere and on container `initGui`, and its own `hasFocusedTextField` guard
+keeps it from stealing keys from a mod's text field. Commits are fed
+char-by-char through `EmiScreenManager.search.charTyped`, the exact same path
+as manual typing, so `onChanged` → `EmiSearch.search` refresh, the 256-char
+limit and format-code stripping all apply. NEI and EMI are mutually exclusive
+recipe viewers; only the loaded one's target gets registered.
 
 ## Caveats
 
