@@ -1,4 +1,4 @@
-buildscript {
+uildscript {
     repositories {
         mavenLocal()
         mavenCentral()
@@ -28,6 +28,12 @@ buildscript {
     }
 }
 
+apply plugin: 'forge'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+apply plugin: 'java'
+apply plugin: 'maven-publish'
+
 if (project.enableUsingKotlin.toBoolean()) {
     apply plugin: 'kotlin'
     apply plugin: 'org.jetbrains.kotlin.jvm'
@@ -36,12 +42,6 @@ if (project.enableUsingKotlin.toBoolean()) {
 if (project.enableUsingScala.toBoolean()) {
     apply plugin: 'scala'
 }
-
-apply plugin: 'forge'
-apply plugin: 'eclipse'
-apply plugin: 'idea'
-apply plugin: 'java'
-apply plugin: 'maven-publish'
 
 version = "${project.modVersion}"
 group = "${project.modGroupId}"
@@ -74,11 +74,6 @@ repositories {
         name "Modrinth Maven"
         url "https://api.modrinth.com/maven"
     }
-
-    maven {
-        name "JitPack"
-        url "https://jitpack.io"
-    }
 }
 
 dependencies {
@@ -91,25 +86,12 @@ dependencies {
         implementation "curse.maven:MysteriumLib-645051:3963822"
     }
 
-    // NEI is compileOnly: the jar the mod runs against comes from the mods folder
-    // (GTNH fork; mutually exclusive with the other recipe-viewer mods), and the
-    // compat layer only touches it when loaded.
-    // NEI 仅为编译期依赖：运行时 jar 来自 mods 目录（GTNH 非官方版，与另两个
-    // 配方查看器模组互斥），兼容层仅在检测到加载时触碰其类。
     compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
     compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
     compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
+    compileOnly "com.github.ysesiq:retroEMI-Forge:1.1.24-beta1"
 
-    // EMI is compileOnly too: the RetroEMI Forge port jar lives in lib/ and the
-    // runtime copy comes from the mods folder; the compat layer only touches it
-    // when loaded. A plain fileTree would be invisible to IDE classpath models.
-    // EMI 同样仅为编译期依赖：RetroEMI Forge 移植版 jar 位于 lib/，运行时副本
-    // 来自 mods 目录；兼容层仅在检测到加载时触碰其类。显式声明（而非 fileTree）
-    // 保证 IDE 类路径模型能解析。
-    compileOnly files('lib/emi-1.1.24-beta1+1.7.10+forge-dev.jar')
     implementation fileTree(dir: 'lib', includes: ['*.jar'])
-
-    implementation "com.github.song682:CatFrame:v0.5.8-hotfix"
 }
 
 def dependenciesList = []
@@ -224,7 +206,7 @@ sourceCompatibility = targetCompatibility = "1.8"
 
 tasks.withType(Jar).configureEach {
     compileJava.options.encoding = 'UTF-8'
-    compileJava.options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all" << "-Xlint:-processing"
+    compileJava.options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all"
 }
 
 
@@ -232,7 +214,7 @@ allprojects {
     gradle.projectsEvaluated {
         tasks.withType(JavaCompile).tap {
             configureEach {
-                options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all" << "-Xlint:-processing"
+                options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all"
             }
         }
     }
@@ -294,19 +276,6 @@ tasks.named("build").configure {
 artifacts {
     archives deobfJar
     archives sourcesJar
-}
-
-// JitPack builds publish through maven-publish, and Gradle 6+ would emit a
-// Gradle Module Metadata file (IMEInputBackport-<ver>.module) alongside the
-// pom. Legacy resolvers (incl. the GTNH build environment) treat that file as
-// a module and fail to load it, so metadata generation is disabled — the pom
-// alone is enough for a Minecraft mod dependency.
-// JitPack 构建经 maven-publish 发布，Gradle 6+ 默认会在 pom 旁生成 Gradle
-// Module Metadata 文件（IMEInputBackport-<ver>.module）。旧版解析器（含 GTNH
-// 构建环境）会把该文件当作模块导致加载错误，故禁用其生成——对 Minecraft
-// 模组依赖而言，仅有 pom 即可。
-tasks.withType(GenerateModuleMetadata) {
-    enabled = false
 }
 
 if (project.include_license.toBoolean()){
