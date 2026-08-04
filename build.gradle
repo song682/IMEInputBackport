@@ -54,7 +54,7 @@ configurations {
 
 minecraft {
     version = "1.7.10-10.13.4.1614-1.7.10"
-    runDir = "minecraft"
+    runDir = ".minecraft"
 }
 
 repositories {
@@ -76,7 +76,7 @@ repositories {
     }
 
     maven {
-        name "JitPack"
+        name "Jitpack"
         url "https://jitpack.io"
     }
 }
@@ -91,12 +91,13 @@ dependencies {
         implementation "curse.maven:MysteriumLib-645051:3963822"
     }
 
-    compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
-    compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
-    compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
-    implementation "com.github.song682:CatFrame:v0.6.2"
+    runtimeOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
+    runtimeOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
+    runtimeOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
 
-    compileOnly fileTree(dir: 'lib', includes: ['*.jar'])
+    implementation "com.github.song682:CatFrame:v0.6.5"
+
+    implementation fileTree(dir: 'lib', includes: ['*.jar'])
 }
 
 def dependenciesList = []
@@ -137,10 +138,10 @@ def extractTagsFromJava() {
     }
 
     return [
-        version: versionMatcher.group(1),
-        name   : nameMatcher.find() ? nameMatcher.group(1) : null,
-        modid  : modidMatcher.find() ? modidMatcher.group(1) : null,
-        path   : tagsFile.path
+            version: versionMatcher.group(1),
+            name   : nameMatcher.find() ? nameMatcher.group(1) : null,
+            modid  : modidMatcher.find() ? modidMatcher.group(1) : null,
+            path   : tagsFile.path
     ]
 }
 
@@ -211,7 +212,7 @@ sourceCompatibility = targetCompatibility = "1.8"
 
 tasks.withType(Jar).configureEach {
     compileJava.options.encoding = 'UTF-8'
-    compileJava.options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all"
+    compileJava.options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all" << "-Xlint:-processing"
 }
 
 
@@ -219,7 +220,7 @@ allprojects {
     gradle.projectsEvaluated {
         tasks.withType(JavaCompile).tap {
             configureEach {
-                options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all"
+                options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation" << "-Xlint:all" << "-Xlint:-processing"
             }
         }
     }
