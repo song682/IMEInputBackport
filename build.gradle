@@ -89,9 +89,8 @@ dependencies {
     compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
     compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
     compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
-    compileOnly "com.github.ysesiq:retroEMI-Forge:1.1.24-beta1"
 
-    implementation fileTree(dir: 'lib', includes: ['*.jar'])
+    compileOnly fileTree(dir: 'lib', includes: ['*.jar'])
 }
 
 def dependenciesList = []
