@@ -91,9 +91,14 @@ dependencies {
         implementation "curse.maven:MysteriumLib-645051:3963822"
     }
 
-    implementation "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
-    implementation "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
-    implementation "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
+        // NEI is compileOnly: the jar the mod runs against comes from the mods folder
+        // (GTNH fork; mutually exclusive with the other recipe-viewer mods), and the
+        // compat layer only touches it when loaded.
+        // NEI 仅为编译期依赖：运行时 jar 来自 mods 目录（GTNH 非官方版，与另两个
+        // 配方查看器模组互斥），兼容层仅在检测到加载时触碰其类。
+        compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
+        compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
+        compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
 
     implementation "com.github.song682:CatFrame:v0.5.8-hotfix"
     implementation fileTree(dir: 'lib', includes: ['*.jar'])

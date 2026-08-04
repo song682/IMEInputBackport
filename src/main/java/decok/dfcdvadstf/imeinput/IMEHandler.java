@@ -5,6 +5,9 @@ import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 import decok.dfcdvadstf.catframe.compact.forge.event.CatFrameGuiEvent;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
+import decok.dfcdvadstf.imeinput.api.IMECommitTarget;
+import decok.dfcdvadstf.imeinput.api.IMEInputAPI;
+import decok.dfcdvadstf.imeinput.compat.NEICompat;
 import decok.dfcdvadstf.imeinput.gui.IMEOverlay;
 import decok.dfcdvadstf.imeinput.gui.IMETheme;
 import net.minecraft.client.Minecraft;
@@ -23,10 +26,10 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * <p>
  * 职责：
  * <ol>
- *   <li>获取 LWJGL 游戏窗口句柄（反射 {@code WindowsDisplay.current_display.hwnd}）
- *       并安装 IME 后端（AUTO 先试 TSF，失败降级 IMM32 子类化）</li>
- *   <li>作为 {@link IMEBridge.IMECallback} 接收组字/提交/候选回调</li>
- *   <li>在客户端 tick 中：按聚焦文本框开关 IME、定位候选窗、消费已提交文字</li>
+ * <li>获取 LWJGL 游戏窗口句柄（反射 {@code WindowsDisplay.current_display.hwnd}）
+ * 并安装 IME 后端（AUTO 先试 TSF，失败降级 IMM32 子类化）</li>
+ * <li>作为 {@link IMEBridge.IMECallback} 接收组字/提交/候选回调</li>
+ * <li>在客户端 tick 中：按聚焦文本框开关 IME、定位候选窗、消费已提交文字</li>
  * </ol>
  * 说明：LWJGL 2.x 的窗口消息在游戏主线程的 {@code Display.update()} 中被泵送，
  * 因此本地回调实际运行在主线程；但仍通过队列在 tick 中统一消费，保证时序与线程安全。
@@ -41,6 +44,15 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     /** 当前聚焦的文本框（由 Mixin 更新） */
     private static volatile WeakReference<GuiTextField> focusedField = EMPTY;
+
+    /**
+     * 当前激活的 IME 提交目标（每 tick 由 {@link IMEInputAPI} 查询并缓存，
+     * 供提交路由与候选窗锚点使用；渲染线程与 tick 同在主线程，无并发问题）。
+     * Currently active IME commit target, polled and cached each tick for commit
+     * routing and the candidate-window anchor (render and tick share the main
+     * thread).
+     */
+    private IMECommitTarget activeTarget = null;
 
     /** 已提交文字队列（回调线程写入，客户端 tick 消费） */
     private final ConcurrentLinkedQueue<String> commitQueue = new ConcurrentLinkedQueue<String>();
@@ -80,7 +92,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     /**
      * 配置的后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
      * {@code BACKEND_IMM32}），由 {@link #init(int, boolean)} 从 Forge 配置传入。
-     * Configured backend mode, passed in from the Forge config via {@link #init(int, boolean)}.
+     * Configured backend mode, passed in from the Forge config via
+     * {@link #init(int, boolean)}.
      */
     private static int backendMode = IMEBridge.BACKEND_AUTO;
 
@@ -120,14 +133,15 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
-    //  数据结构
+    // 数据结构
     // ============================================================
 
     /**
      * 候选页快照：本地层已按 {@code dwPageStart}/{@code dwPageSize} 切好的当前可见页。
      * 不可变，回调线程构造后整体发布，渲染线程只读。
      * Candidate page snapshot: the visible page pre-sliced by the native layer.
-     * Immutable — published as a whole from the callback thread, read-only for rendering.
+     * Immutable — published as a whole from the callback thread, read-only for
+     * rendering.
      */
     public static final class CandidatePage {
         /** 页内候选词文本（顺序即页内序号） / Page candidate texts, in page order */
@@ -142,7 +156,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
-    //  生命周期
+    // 生命周期
     // ============================================================
 
     /**
@@ -160,7 +174,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * the overlay look is driven by the resource-pack theme file. The actual
      * backend install is deferred to the first tick (Display exists by then).
      *
-     * @param mode      后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} / {@code BACKEND_IMM32}）
+     * @param mode      后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
+     *                  {@code BACKEND_IMM32}）
      * @param nativeBar true = 原生候选条（默认）；false = 自绘候选框
      */
     public static void init(int mode, boolean nativeBar) {
@@ -198,6 +213,18 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     /**
+     * 当前聚焦的文本框（Mixin 追踪的实例；可能为 null）。
+     * 供 IME 提交目标（如 {@link NEICompat}）与聚焦文本框对照判定使用。
+     * The currently focused text field tracked by the Mixin (may be null);
+     * used by IME commit targets (e.g. {@link NEICompat}) for cross-checks.
+     *
+     * @return 聚焦文本框；无则 null
+     */
+    public static GuiTextField getFocusedField() {
+        return focusedField.get();
+    }
+
+    /**
      * 组字预览串（可能为空字符串）。供 Mixin 渲染下划线预览使用。
      *
      * @return 当前组字串
@@ -210,7 +237,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     /**
      * 当前组字快照（分段 + 聚焦段 + 光标，对齐 PreeditEvent 形态）。
      * 供 Mixin 渲染分段高亮预览使用。
-     * Current composition snapshot (blocks + focused block + caret) for inline rendering.
+     * Current composition snapshot (blocks + focused block + caret) for inline
+     * rendering.
      *
      * @return 组字快照；未在组字时返回 null
      */
@@ -234,8 +262,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
-    //  自绘组词窗（IMEOverlay）查询接口
-    //  Query surface for the self-drawn composition overlay
+    // 自绘组词窗（IMEOverlay）查询接口
+    // Query surface for the self-drawn composition overlay
     // ============================================================
 
     /**
@@ -261,9 +289,11 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     /**
      * 自绘组词窗的锚点 X（GUI 逻辑坐标）：优先用 Mixin 上报的光标位置，
-     * 尚未上报时回退到聚焦文本框左下角。
-     * Overlay anchor X in GUI coordinates: the reported caret position,
-     * falling back to the focused field's bottom-left corner.
+     * 尚未上报时回退到兼容目标（非 GuiTextField 体系，如 CatFrame EditBox）
+     * 提供的锚点，再回退到聚焦文本框左下角。
+     * Overlay anchor X in GUI coordinates: the reported caret position, falling
+     * back to the active commit target's anchor (non-GuiTextField controls, e.g.
+     * CatFrame EditBox), then to the focused field's bottom-left corner.
      *
      * @return 锚点 GUI X；无可用锚点时返回 0
      */
@@ -271,6 +301,10 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         int x = INSTANCE.caretGuiX;
         if (x >= 0) {
             return x;
+        }
+        IMECommitTarget target = INSTANCE.activeTarget;
+        if (target != null && target.getCaretX() >= 0) {
+            return target.getCaretX();
         }
         GuiTextField field = focusedField.get();
         return field != null ? field.xPosition : 0;
@@ -287,13 +321,17 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         if (y >= 0) {
             return y;
         }
+        IMECommitTarget target = INSTANCE.activeTarget;
+        if (target != null && target.getCaretY() >= 0) {
+            return target.getCaretY();
+        }
         GuiTextField field = focusedField.get();
         return field != null ? field.yPosition + field.height + 2 : 0;
     }
 
     // ============================================================
-    //  GUI 键盘事件拦截（CatFrame 事件桥）
-    //  GUI keyboard interception (CatFrame event bridge)
+    // GUI 键盘事件拦截（CatFrame 事件桥）
+    // GUI keyboard interception (CatFrame event bridge)
     // ============================================================
 
     /**
@@ -362,13 +400,13 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         int state = 0;
         if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT)
                 || keysym == 0xffe1 || keysym == 0xffe2) {
-            state |= 1;       // ShiftMask
+            state |= 1; // ShiftMask
         }
         if (Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL)) {
-            state |= 1 << 2;  // ControlMask
+            state |= 1 << 2; // ControlMask
         }
         if (Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU)) {
-            state |= 1 << 3;  // Mod1Mask (Alt)
+            state |= 1 << 3; // Mod1Mask (Alt)
         }
         return IMEBridge.processKey(keysym, state, !press);
     }
@@ -385,26 +423,46 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      */
     private static int keysymFromEvent(int key, char ch) {
         switch (key) {
-            case Keyboard.KEY_RETURN:      return 0xff0d;
-            case Keyboard.KEY_NUMPADENTER: return 0xff8d;
-            case Keyboard.KEY_BACK:        return 0xff08;
-            case Keyboard.KEY_TAB:         return 0xff09;
-            case Keyboard.KEY_ESCAPE:      return 0xff1b;
-            case Keyboard.KEY_DELETE:      return 0xffff;
-            case Keyboard.KEY_HOME:        return 0xff50;
-            case Keyboard.KEY_LEFT:        return 0xff51;
-            case Keyboard.KEY_UP:          return 0xff52;
-            case Keyboard.KEY_RIGHT:       return 0xff53;
-            case Keyboard.KEY_DOWN:        return 0xff54;
-            case Keyboard.KEY_PRIOR:       return 0xff55;
-            case Keyboard.KEY_NEXT:        return 0xff56;
-            case Keyboard.KEY_END:         return 0xff57;
-            case Keyboard.KEY_LSHIFT:      return 0xffe1;
-            case Keyboard.KEY_RSHIFT:      return 0xffe2;
-            case Keyboard.KEY_LCONTROL:    return 0xffe3;
-            case Keyboard.KEY_RCONTROL:    return 0xffe4;
-            case Keyboard.KEY_LMENU:       return 0xffe9;
-            case Keyboard.KEY_RMENU:       return 0xffea;
+            case Keyboard.KEY_RETURN:
+                return 0xff0d;
+            case Keyboard.KEY_NUMPADENTER:
+                return 0xff8d;
+            case Keyboard.KEY_BACK:
+                return 0xff08;
+            case Keyboard.KEY_TAB:
+                return 0xff09;
+            case Keyboard.KEY_ESCAPE:
+                return 0xff1b;
+            case Keyboard.KEY_DELETE:
+                return 0xffff;
+            case Keyboard.KEY_HOME:
+                return 0xff50;
+            case Keyboard.KEY_LEFT:
+                return 0xff51;
+            case Keyboard.KEY_UP:
+                return 0xff52;
+            case Keyboard.KEY_RIGHT:
+                return 0xff53;
+            case Keyboard.KEY_DOWN:
+                return 0xff54;
+            case Keyboard.KEY_PRIOR:
+                return 0xff55;
+            case Keyboard.KEY_NEXT:
+                return 0xff56;
+            case Keyboard.KEY_END:
+                return 0xff57;
+            case Keyboard.KEY_LSHIFT:
+                return 0xffe1;
+            case Keyboard.KEY_RSHIFT:
+                return 0xffe2;
+            case Keyboard.KEY_LCONTROL:
+                return 0xffe3;
+            case Keyboard.KEY_RCONTROL:
+                return 0xffe4;
+            case Keyboard.KEY_LMENU:
+                return 0xffe9;
+            case Keyboard.KEY_RMENU:
+                return 0xffea;
             default:
                 // 可打印 ASCII：keysym 即码点 / Printable ASCII: keysym == codepoint
                 return ch >= 0x20 && ch < 0x7f ? ch : 0;
@@ -412,7 +470,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
-    //  客户端 tick：安装 / IME 开关 / 消费提交
+    // 客户端 tick：安装 / IME 开关 / 消费提交
     // ============================================================
 
     @SubscribeEvent
@@ -433,14 +491,23 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         Minecraft mc = Minecraft.getMinecraft();
 
         // 窗口重建自愈：仅在侦测到窗口改动（全屏切换/尺寸变化）时才复检句柄
-        // Window-recreation self-healing: revalidate hwnd only on observed window changes
+        // Window-recreation self-healing: revalidate hwnd only on observed window
+        // changes
         detectWindowChange(mc);
 
         GuiScreen screen = mc.currentScreen;
         GuiTextField field = focusedField.get();
 
-        // 仅当处于某个 GUI 且有聚焦文本框时启用 IME
-        boolean wantEnable = screen != null && field != null && field.isFocused();
+        // 每 tick 查询激活的 IME 提交目标（NEI 搜索框/数量框、CatFrame EditBox 等）：
+        // 非 GuiTextField 体系的控件靠它驱动 IME 开关与提交路由
+        // Poll the active IME commit target each tick (NEI search/quantity box,
+        // CatFrame EditBox, ...): non-GuiTextField controls rely on it for the
+        // IME switch and commit routing
+        IMECommitTarget target = IMEInputAPI.getActiveTarget();
+        activeTarget = target;
+
+        // 仅当处于某个 GUI 且有聚焦文本框（原生或兼容目标）时启用 IME
+        boolean wantEnable = screen != null && ((field != null && field.isFocused()) || target != null);
 
         if (wantEnable != lastImeEnabled) {
             IMEBridge.setEnabled(hwnd, wantEnable);
@@ -585,11 +652,30 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         return true;
     }
 
-    /** 消费已提交文字，写入聚焦文本框 */
+    /**
+     * 消费已提交文字：默认写入聚焦文本框；有激活的 IME 提交目标（NEI 搜索框/
+     * 数量框等，见 {@link IMECommitTarget}）时交给目标自身的提交管线——NEI 场景
+     * 即走按键注入（对齐 IngameIME 的 NEI 集成），由 LayoutManager 路由并触发
+     * onTextChange 刷新搜索结果，直接 writeText 会绕过刷新；CatFrame EditBox 等
+     * 非 GuiTextField 控件由目标实现自行插入并触发自身刷新。
+     * Drains committed text: writes into the focused field by default; when an
+     * IME commit target is active (NEI search/quantity box, see
+     * {@link IMECommitTarget}) the text goes through the target's own pipeline —
+     * for NEI that is key injection (mirroring IngameIME) so LayoutManager routes
+     * it and onTextChange refreshes the results (a plain writeText would skip the
+     * refresh); for non-GuiTextField controls (CatFrame EditBox) the target
+     * inserts and refreshes itself.
+     */
     private void drainCommits(GuiTextField field) {
         String text;
+        IMECommitTarget target = activeTarget;
         while ((text = commitQueue.poll()) != null) {
-            if (field != null && field.isFocused() && text.length() > 0) {
+            if (text.length() == 0) {
+                continue;
+            }
+            if (target != null) {
+                target.commitText(text);
+            } else if (field != null && field.isFocused()) {
                 field.writeText(text);
             }
         }
@@ -615,9 +701,21 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         int guiX = caretGuiX;
         int guiY = caretGuiY;
         if (guiX < 0 || guiY < 0) {
-            // 回退：文本框左下角（GUI 单位） / Fallback: field bottom-left corner
-            guiX = field.xPosition;
-            guiY = field.yPosition + field.height;
+            // 兼容目标（非 GuiTextField 体系）提供的光标锚点
+            // Caret anchor supplied by the active commit target
+            IMECommitTarget target = activeTarget;
+            if (target != null && target.getCaretX() >= 0 && target.getCaretY() >= 0) {
+                guiX = target.getCaretX();
+                guiY = target.getCaretY();
+            } else if (field != null) {
+                // 回退：文本框左下角（GUI 单位） / Fallback: field bottom-left corner
+                guiX = field.xPosition;
+                guiY = field.yPosition + field.height;
+            } else {
+                // 无锚点：原生文本框与兼容目标均未提供光标位置，跳过定位
+                // No anchor: neither the native field nor the target has a caret
+                return;
+            }
         }
         // 组字中：系统窗让位给自绘 PreEdit 框，压到其下沿（+1 为两框间隙）
         // Composing: yield to the self-drawn PreEdit box, stack right below it
@@ -630,7 +728,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
-    //  句柄解析
+    // 句柄解析
     // ============================================================
 
     /**
@@ -680,14 +778,15 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     // ============================================================
-    //  IMECallback（本地层回调）
+    // IMECallback（本地层回调）
     // ============================================================
 
     @Override
     public void onCompositionUpdate(IMEBridge.CompositionInfo info) {
         this.compositionInfo = info;
         // 组字结束时候选页一并作废（个别输入法不发 IMN_CLOSECANDIDATE）
-        // Drop the candidate page when composition ends (some IMEs skip IMN_CLOSECANDIDATE)
+        // Drop the candidate page when composition ends (some IMEs skip
+        // IMN_CLOSECANDIDATE)
         if (info == null || !info.isComposing) {
             this.candidatePage = null;
         }
