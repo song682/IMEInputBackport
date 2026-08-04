@@ -54,7 +54,7 @@ import org.lwjgl.opengl.GL11;
  */
 public final class IMEOverlay extends AbstractComponent implements Overlay {
 
-    /** 单例：由 {@link IMEHandler#init()} 注册到 OverlayManager / Singleton, registered once */
+    /** 单例：由 {@link IMEHandler#init} 注册到 OverlayManager / Singleton, registered once */
     public static final IMEOverlay INSTANCE = new IMEOverlay();
 
     /**
