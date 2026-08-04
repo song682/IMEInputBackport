@@ -95,7 +95,7 @@ dependencies {
     runtimeOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
     runtimeOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
 
-    implementation "com.github.song682:CatFrame:v0.6.5"
+    implementation "com.github.song682:CatFrame:v0.6.2"
 
     implementation fileTree(dir: 'lib', includes: ['*.jar'])
 }
