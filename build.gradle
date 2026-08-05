@@ -91,13 +91,13 @@ dependencies {
         implementation "curse.maven:MysteriumLib-645051:3963822"
     }
 
-    runtimeOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
-    runtimeOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
-    runtimeOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
+    compileOnly "maven.modrinth:notenoughitems-unofficial:${project.nei_version}-GTNH"
+    compileOnly "maven.modrinth:codechickencore-unofficial:${project.cc_version}"
+    compileOnly "maven.modrinth:codechickenlib-unofficial:${project.cc_version}"
 
     implementation "com.github.song682:CatFrame:v0.6.2"
 
-    implementation fileTree(dir: 'lib', includes: ['*.jar'])
+    compileOnly fileTree(dir: 'lib', includes: ['*.jar'])
 }
 
 def dependenciesList = []
