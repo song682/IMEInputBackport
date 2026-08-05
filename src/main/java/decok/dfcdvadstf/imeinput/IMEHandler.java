@@ -506,8 +506,18 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         IMECommitTarget target = IMEInputAPI.getActiveTarget();
         activeTarget = target;
 
-        // 仅当处于某个 GUI 且有聚焦文本框（原生或兼容目标）时启用 IME
-        boolean wantEnable = screen != null && ((field != null && field.isFocused()) || target != null);
+        // 仅当处于某个 GUI 且有聚焦文本框（原生或兼容目标）时启用 IME；
+        // 但"全屏治理型"目标（如 JourneyMap 全屏地图）可整体压制 IME：其
+        // 隐藏聊天框的 vanilla 文本框永不失焦，默认焦点路径会误激活 IME，
+        // 候选栏挡在地图上且组字吞掉 J 等快捷键（地图无法关闭）。
+        // Enable the IME only when a GUI hosts a focused field (native or a
+        // commit target); "fullscreen-governing" targets (e.g. the JourneyMap
+        // fullscreen map) may suppress it entirely — their hidden chat widget's
+        // vanilla text field never loses focus, which would spuriously enable
+        // the IME and let the candidate bar cover the map while composition
+        // swallows shortcut keys such as J (the map can no longer be closed).
+        boolean wantEnable = screen != null && !IMEInputAPI.isImeBlocked()
+                && ((field != null && field.isFocused()) || target != null);
 
         if (wantEnable != lastImeEnabled) {
             IMEBridge.setEnabled(hwnd, wantEnable);

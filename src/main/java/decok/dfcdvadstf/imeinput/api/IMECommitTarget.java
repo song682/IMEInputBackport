@@ -93,4 +93,25 @@ public interface IMECommitTarget {
     default int getCaretY() {
         return -1;
     }
+
+    /**
+     * 当前是否应强制禁用 IME（即使存在聚焦文本框或激活目标）。
+     * 供"全屏治理型"目标使用——这类界面的输入框体系不走本接口的提交路由
+     * （如 JourneyMap 全屏地图内部隐藏着永远聚焦的 vanilla 文本框，默认焦点
+     * 路径会误激活 IME），需要在界面显示期间整体关掉 IME；普通提交目标
+     * 保持默认 false，不参与抑制。每 tick 与 {@link #isActive()} 一起被查询。
+     * Whether the IME should be forcibly disabled right now (even with a
+     * focused text field or an active target). For "fullscreen-governing"
+     * targets whose input controls never use this interface's commit routing —
+     * e.g. the JourneyMap fullscreen map hosts an always-focused vanilla text
+     * field inside a hidden chat widget, which would spuriously enable the IME
+     * via the default focus path — the IME must be switched off for the whole
+     * screen; ordinary commit targets keep the default false and never block.
+     * Polled once per tick alongside {@link #isActive()}.
+     *
+     * @return true = 强制禁用 IME1
+     */
+    default boolean isImeBlocked() {
+        return false;
+    }
 }

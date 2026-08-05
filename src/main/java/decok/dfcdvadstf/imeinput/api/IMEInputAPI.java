@@ -68,4 +68,25 @@ public final class IMEInputAPI {
         }
         return null;
     }
+
+    /**
+     * 是否有已注册目标要求当前强制禁用 IME（如 JourneyMap 全屏地图界面——
+     * 其隐藏聊天框的 vanilla 文本框永不失焦，默认焦点路径会误激活 IME）。
+     * 每 tick 在 IME 开关判定前查询一次；任一目标返回 true 即整体禁用。
+     * Whether any registered target demands the IME be forcibly disabled
+     * (e.g. the JourneyMap fullscreen map — its hidden chat widget's vanilla
+     * text field never loses focus, so the default focus path would spuriously
+     * enable the IME). Poll once per tick before the IME switch decision; any
+     * target returning true disables the IME entirely.
+     *
+     * @return true = 至少一个目标要求禁用 IME
+     */
+    public static boolean isImeBlocked() {
+        for (IMECommitTarget target : targets) {
+            if (target.isImeBlocked()) {
+                return true;
+            }
+        }
+        return false;
+    }
 }
