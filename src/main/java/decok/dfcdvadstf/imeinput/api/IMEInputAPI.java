@@ -53,16 +53,17 @@ public final class IMEInputAPI {
     }
 
     /**
-     * 返回第一个 {@link IMECommitTarget#isActive()} 为 true 的已注册目标；
+     * 返回第一个 {@link IMECommitTarget#shouldReceiveInput()} 为 true 的已注册目标；
      * 无激活目标时返回 null。每 tick 调用一次即可。
-     * Returns the first registered target whose {@link IMECommitTarget#isActive()}
+     * Returns the first registered target whose
+     * {@link IMECommitTarget#shouldReceiveInput()}
      * is true, or null if none is active. Poll once per tick.
      *
      * @return 激活目标；无则 null
      */
     public static IMECommitTarget getActiveTarget() {
         for (IMECommitTarget target : targets) {
-            if (target.isActive()) {
+            if (target.shouldReceiveInput()) {
                 return target;
             }
         }

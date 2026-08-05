@@ -13,7 +13,7 @@ import java.lang.reflect.Method;
 /**
  * JourneyMap 兼容层——{@link IMECommitTarget} 的内置实现之一，但与
  * {@link NEICompact} / {@link EMICompact} 不同，它是"全屏治理型"目标：
- * 不提供提交路由（{@link #isActive()} 恒为 false），只负责在 JourneyMap
+ * 不提供提交路由（{@link #shouldReceiveInput()} 恒为 false），只负责在 JourneyMap
  * 全屏地图的聊天框隐藏期间强制禁用 IME（{@link #isImeBlocked()}）。
  * <p>
  * 背景：JourneyMap 全屏地图（{@link Fullscreen}）在 {@code setWorldAndResolution}
@@ -39,7 +39,8 @@ import java.lang.reflect.Method;
  * <p>
  * JourneyMap compatibility layer — a built-in {@link IMECommitTarget}, but
  * unlike {@link NEICompact} / {@link EMICompact} it is a "fullscreen-governing"
- * target: it offers no commit routing ({@link #isActive()} is always false) and
+ * target: it offers no commit routing ({@link #shouldReceiveInput()} is always
+ * false) and
  * only forcibly disables the IME while the JourneyMap fullscreen map's chat box
  * is hidden ({@link #isImeBlocked()}).
  * <p>
@@ -109,7 +110,7 @@ public final class JourneyMapCompact implements IMECommitTarget {
     }
 
     @Override
-    public boolean isActive() {
+    public boolean shouldReceiveInput() {
         // JourneyMap 无提交目标可路由：其全部文本输入控件（MapChat 的
         // GuiChat.inputField、TextField 继承 vanilla GuiTextField）都走 Mixin
         // 默认注入路径，无需本接口的提交管线。恒 false 仅保留"治理"职责。
@@ -144,9 +145,10 @@ public final class JourneyMapCompact implements IMECommitTarget {
 
     @Override
     public void commitText(String text) {
-        // 空实现：{@link #isActive()} 恒为 false，本方法永不会被 IMEHandler
+        // 空实现：{@link #shouldReceiveInput()} 恒为 false，本方法永不会被 IMEHandler
         // 路由调用；保留仅为满足接口契约。
-        // No-op: {@link #isActive()} is always false so IMEHandler never routes
+        // No-op: {@link #shouldReceiveInput()} is always false so IMEHandler never
+        // routes
         // here; kept only to satisfy the interface contract.
     }
 

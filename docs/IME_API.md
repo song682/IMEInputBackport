@@ -19,7 +19,7 @@ An interface with one mandatory method and a couple of optional ones:
 
 | Method                         | Kind                    | What it's for                                                                                                                                                                                         |
 | ------------------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `boolean isActive()`           | required                | Drives the IME switch and commit routing. Return `true` when your control should receive IME input right now — normally that's just "my control has focus". Polled once per client tick.              |
+| `boolean shouldReceiveInput()` | required                | Drives the IME switch and commit routing. Return `true` when your control should receive IME input right now — normally that's just "my control has focus". Polled once per client tick.              |
 | `void commitText(String text)` | required                | Receives the committed text **as a whole**. You decide how to get it into your control — char-by-char key injection or a bulk insert — as long as your own refresh logic fires, same as manual input. |
 | `int getCaretX()`              | optional (default `-1`) | Candidate-window anchor X in GUI coordinates. `-1` means "no opinion", let the mod fall back.                                                                                                         |
 | `int getCaretY()`              | optional (default `-1`) | Candidate-window anchor Y, GUI coordinates, **below** the caret. Same fallback rule.                                                                                                                  |
@@ -42,7 +42,7 @@ A static registry, nothing more:
 
 Every client tick the mod asks the registry "who's active?" and then:
 
-1. **IME switch** — if any target says `isActive()`, the IME is enabled even
+1. **IME switch** — if any target says `shouldReceiveInput()`, the IME is enabled even
    when no vanilla `GuiTextField` is focused (your control doesn't need the
    Mixin at all).
 2. **Commit routing** — committed text goes to the active target's
@@ -66,7 +66,7 @@ client side only:
 IMEInputAPI.register(new MySearchBox());
 ```
 
-**3. Make `isActive()` honest and `commitText()` reuse your own paste path.**
+**3. Make `shouldReceiveInput()` honest and `commitText()` reuse your own paste path.**
 
 ```java
 public class MySearchBox implements IMECommitTarget {
@@ -75,7 +75,7 @@ public class MySearchBox implements IMECommitTarget {
     private boolean focused; // flipped by your mouse/key handlers
 
     @Override
-    public boolean isActive() {
+    public boolean shouldReceiveInput() {
         return focused;
     }
 
@@ -101,14 +101,14 @@ public class MySearchBox implements IMECommitTarget {
 
 A handy model to copy: CatFrame's `AbstractEditBox` is a perfect candidate —
 it has its own `focused` flag and a vanilla-style `keyTyped(char, int)`, so
-`isActive()` is one field read and `commitText()` can feed characters through
+`shouldReceiveInput()` is one field read and `commitText()` can feed characters through
 `keyTyped` (or the paste-style insert path) to keep `onTextChanged()` firing.
 
 ## Built-in targets
 
 The mod registers two targets itself. **`NEICompat`** covers the NEI search and
 quantity boxes (official or GTNH fork). It registers at preInit when NEI is
-loaded, and its `isActive()` is deliberately strict — it only claims commits
+loaded, and its `shouldReceiveInput()` is deliberately strict — it only claims commits
 when you're on a container screen, NEI's focused widget is a `TextField`, and
 that field's inner `GuiTextField` matches the one the Mixin is tracking. That
 last check is what keeps a mod's own text field inside a container (say, an
@@ -117,7 +117,7 @@ char-by-char through `GuiContainerManager.keyTyped` so NEI's `onTextChange`
 refreshes the search — a plain `writeText` would silently skip that.
 
 **`EMICompact`** covers the EMI search box (RetroEMI Forge port). It registers
-at preInit when EMI is loaded, and `isActive()` requires an EMI-hosted screen
+at preInit when EMI is loaded, and `shouldReceiveInput()` requires an EMI-hosted screen
 (container or the EMI recipe browser, per `EmiScreenBase`) with the search box
 input-ready (`TextFieldWidget.isActive()`: visible + focused + editable). The
 EMI search box manages its own focus and is not a vanilla `GuiTextField`, so
@@ -131,10 +131,10 @@ recipe viewers; only the loaded one's target gets registered.
 
 ## Caveats
 
-- **Main thread only.** Register at init, and keep `isActive()` cheap — it's
+- **Main thread only.** Register at init, and keep `shouldReceiveInput()` cheap — it's
   called once per tick.
 - **No Mixin, no problem.** For non-`GuiTextField` controls the mod has no
-  focus tracking of its own; your `isActive()` is the *only* signal, so make
+  focus tracking of its own; your `shouldReceiveInput()` is the *only* signal, so make
   sure it's accurate.
 - **Leaving targets registered is fine.** The mod is client-lifetime; there's
   no shutdown hook to speak of.

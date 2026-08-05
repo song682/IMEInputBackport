@@ -19,7 +19,7 @@ import dev.emi.emi.screen.widget.EmiSearchWidget;
  * 256 长度限制、格式符过滤等全部生效；直接 {@code setText} 整体替换则会绕过
  * 长度截断并按整体写入（行为与逐字键入不完全一致），故不采用。
  * <p>
- * 激活判定与 NEI 版同样严格：{@link #isActive()} 要求当前屏幕存在 EMI 界面
+ * 激活判定与 NEI 版同样严格：{@link #shouldReceiveInput()} 要求当前屏幕存在 EMI 界面
  * 叠加（{@link EmiScreenBase#getCurrent()} 非空，覆盖容器屏幕与 EMI 配方浏览
  * 屏幕，两者都会把按键路由给搜索框），且搜索框处于可输入状态——EMI 搜索框
  * 自管理焦点（{@code EmiSearchWidget.isFocused}，点击搜索框外自动取消，容器
@@ -32,7 +32,8 @@ import dev.emi.emi.screen.widget.EmiSearchWidget;
  * {@link #isLoaded()} 之后（register 前提），未安装 EMI 时不会触发 EMI 类加载。
  * <p>
  * EMI (RetroEMI Forge port) compatibility layer — a built-in
- * {@link IMECommitTarget} implementation on par with {@link NEICompact}: EMI and
+ * {@link IMECommitTarget} implementation on par with {@link NEICompact}: EMI
+ * and
  * NEI are both recipe viewers, mutually exclusive at runtime, and which one is
  * registered depends on what the mods folder actually loaded.
  * <p>
@@ -45,7 +46,8 @@ import dev.emi.emi.screen.widget.EmiSearchWidget;
  * length truncation and write the whole string at once (not identical to typed
  * input), hence not used.
  * <p>
- * Activation is as strict as the NEI one: {@link #isActive()} requires the
+ * Activation is as strict as the NEI one: {@link #shouldReceiveInput()}
+ * requires the
  * current screen to host EMI widgets ({@link EmiScreenBase#getCurrent()} not
  * empty — covers container screens and the EMI recipe browser, both of which
  * route keys to the search box) and the search box to be input-ready. The EMI
@@ -92,7 +94,7 @@ public final class EMICompact implements IMECommitTarget {
     }
 
     @Override
-    public boolean isActive() {
+    public boolean shouldReceiveInput() {
         // 当前屏幕无 EMI 叠加（非容器/非配方浏览屏幕）：搜索框不在屏上，
         // 落回普通注入路径 / Not on an EMI-hosted screen (non-container /
         // non-recipe-browser): the search box is not present, fall back

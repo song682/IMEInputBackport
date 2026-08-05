@@ -22,7 +22,7 @@ import java.lang.reflect.Field;
  * 并触发其 {@code onTextChange} 刷新搜索结果——直接向内部 GuiTextField
  * {@code writeText} 会绕过刷新，搜索/数量不会更新。
  * <p>
- * 激活判定比 IngameIME 的无条件分支更严：{@link #isActive()} 要求当前处于容器
+ * 激活判定比 IngameIME 的无条件分支更严：{@link #shouldReceiveInput()} 要求当前处于容器
  * 界面（{@code GuiContainerManager.getManager()} 非空，非容器屏幕含 NEI 设置界面
  * 自动落回普通注入路径），且 {@code LayoutManager.getInputFocused()} 指向某个聚焦
  * 的 {@link TextField}，且其内部 {@code field}（反射读取 protected 字段）正是
@@ -44,7 +44,7 @@ import java.lang.reflect.Field;
  * {@code writeText} into the inner GuiTextField would skip the refresh.
  * <p>
  * Activation is stricter than IngameIME's unconditional branch:
- * {@link #isActive()}
+ * {@link #shouldReceiveInput()}
  * requires a container screen ({@code GuiContainerManager.getManager()}
  * non-null;
  * non-container screens, including the NEI options screen, fall back to the
@@ -100,7 +100,7 @@ public final class NEICompact implements IMECommitTarget {
     }
 
     @Override
-    public boolean isActive() {
+    public boolean shouldReceiveInput() {
         // 非容器界面（含 NEI 设置界面）：NEI 管线不可用，落回普通注入
         // Not on a container screen (incl. NEI options): pipeline unavailable
         if (GuiContainerManager.getManager() == null) {
