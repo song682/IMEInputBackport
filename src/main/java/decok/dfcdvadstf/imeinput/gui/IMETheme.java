@@ -2,7 +2,7 @@ package decok.dfcdvadstf.imeinput.gui;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import decok.dfcdvadstf.imeinput.IMEInoutBackport;
+import decok.dfcdvadstf.imeinput.IMEInputBackport;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.renderer.Tessellator;
@@ -242,7 +242,7 @@ public final class IMETheme implements IResourceManagerReloadListener {
                     optColor(colors, "caret", def.caret),
                     optColor(colors, "selectedBackground", def.selectedBackground),
                     optColor(colors, "selectedText", def.selectedText));
-            IMEInoutBackport.logger.info("[IME] Theme loaded: style="
+            IMEInputBackport.logger.info("[IME] Theme loaded: style="
                     + (textured ? "TEXTURE" : "FLAT")
                     + " mergeSections=" + loaded.mergeSections
                     + " preeditWindow=" + (preedit != null ? "custom" : "inherit")
@@ -251,7 +251,7 @@ public final class IMETheme implements IResourceManagerReloadListener {
         } catch (Throwable t) {
             // 首载时模组资源尚未注入属预期路径，仅记 debug；正式重载失败记 warn
             // Missing on the very first load is expected; real failures warrant a warn
-            IMEInoutBackport.logger.warn("[IME] Theme descriptor unavailable ("
+            IMEInputBackport.logger.warn("[IME] Theme descriptor unavailable ("
                     + t + "), using built-in defaults");
             return def;
         } finally {
@@ -302,7 +302,7 @@ public final class IMETheme implements IResourceManagerReloadListener {
             }
             return (int) value;
         } catch (NumberFormatException e) {
-            IMEInoutBackport.logger.warn("[IME] Bad theme color '" + raw + "' for " + key);
+            IMEInputBackport.logger.warn("[IME] Bad theme color '" + raw + "' for " + key);
             return def;
         }
     }

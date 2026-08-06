@@ -559,7 +559,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             // Linux：ibus 连接失败（未运行/地址不可解析），后续 tick 重试，只警告一次
             // Linux: ibus connect failed (not running / no address); retry later, warn once
             if (!ibusInstallFailedLogged) {
-                IMEInoutBackport.logger.warn(
+                IMEInputBackport.logger.warn(
                         "[IME] IBus backend install failed (is ibus-daemon running?), will retry");
                 ibusInstallFailedLogged = true;
             }
@@ -589,11 +589,11 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     private void logBackendResult(int backend, String action) {
         String name = IMEBridge.backendName(backend);
         if (backend == IMEBridge.BACKEND_IMM32 && backendMode != IMEBridge.BACKEND_IMM32) {
-            IMEInoutBackport.logger.info("[IME] " + action + " backend=" + name
+            IMEInputBackport.logger.info("[IME] " + action + " backend=" + name
                     + " (TSF unavailable, fell back from "
                     + IMEBridge.backendName(backendMode) + ") hwnd=" + hwnd);
         } else {
-            IMEInoutBackport.logger.info("[IME] " + action + " backend=" + name + " hwnd=" + hwnd);
+            IMEInputBackport.logger.info("[IME] " + action + " backend=" + name + " hwnd=" + hwnd);
         }
     }
 
@@ -651,7 +651,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         IMEBridge.uninstall(hwnd);
         int backend = IMEBridge.install(xDisplay, current, backendMode);
         IMEBridge.setEnabled(current, false);
-        IMEInoutBackport.logger.info("[IME] Game window recreated, rehooked hwnd "
+        IMEInputBackport.logger.info("[IME] Game window recreated, rehooked hwnd "
                 + hwnd + " -> " + current);
         hwnd = current;
         logBackendResult(backend, "Re-installed");
@@ -780,7 +780,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             return hwndField.getLong(display);
         } catch (Throwable t) {
             if (!handleLookupFailedLogged) {
-                IMEInoutBackport.logger.warn("[IME] Failed to resolve LWJGL window handle: " + t);
+                IMEInputBackport.logger.warn("[IME] Failed to resolve LWJGL window handle: " + t);
                 handleLookupFailedLogged = true;
             }
             return 0L;

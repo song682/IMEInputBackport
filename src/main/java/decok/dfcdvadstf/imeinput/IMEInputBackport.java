@@ -19,11 +19,23 @@ import org.jnilib.imeinput.IMEBridge;
 // JourneyMap is optional: its fullscreen map suppresses the IME while open.
 // JourneyMap 为可选：全屏地图打开期间压制 IME。
 @Mod(modid = Tags.MODID, name = Tags.NAME, version = Tags.VERSION, useMetadata = true, dependencies = "required-after:catframe@[0.5.8,);after:NotEnoughItems;after:emi@[1.1.24-beta1,);after:journeymap")
-public class IMEInoutBackport {
+public class IMEInputBackport {
     public static Logger logger = LogManager.getLogger(Tags.NAME);
 
     @EventHandler
     public void preInit(FMLPreInitializationEvent event) {
+
+        if (Loader.isModLoaded("ingameime"))
+            throw new RuntimeException("IngameIME is detected, the duplicate IME backend is not allowed.");
+        if (Loader.isModLoaded("autoime") && Loader.isModLoaded("inputfix"))
+            throw new RuntimeException("AutoIME is detected, the duplicate IME backend is not allowed.");
+        if (Loader.isModLoaded("autoime"))
+            throw new RuntimeException("AutoIME is detected, the duplicate IME backend is not allowed.");
+        if (Loader.isModLoaded("inputfix"))
+            throw new RuntimeException("InputFix is detected, the duplicate IME backend is not allowed.");
+        if (event.getSide().isServer())
+            throw new RuntimeException("Don't run IME Input Backport on the server.");
+
         // Client-only: install IME backend & callbacks.
         // 仅客户端：安装 IME 后端与回调（避免在专用服务端加载客户端类）。
         if (event.getSide().isClient()) {
@@ -42,15 +54,21 @@ public class IMEInoutBackport {
             IMEHandler.init(mode, nativeBar);
             // Register built-in IME commit targets (NEI search/quantity box).
             // 注册内置 IME 提交目标（NEI/EMI 搜索框/数量框；未装 NEI/EMI 时为空操作）。
-            NEICompact.register();
-            EMICompact.register();
-            // JourneyMap 全屏地图打开期间压制 IME（未装 JourneyMap 时为空操作）。
+            if (Loader.isModLoaded("NotEnoughItems")) {
+                logger.info("[IME] Registering NEI commit target");
+                NEICompact.register();
+            }
+            if (Loader.isModLoaded("emi")) {
+                logger.info("[IME] Registering EMI commit target");
+                EMICompact.register();
+            }
             // JourneyMap fullscreen map suppresses the IME while open (no-op
-            // when JourneyMap is absent).
-            JourneyMapCompact.register();
+            // when JourneyMap is absent)
+            if (Loader.isModLoaded("journeymap")) {
+                logger.info("[IME] Registering JourneyMap fullscreen map suppression");
+                JourneyMapCompact.register();
+            }
         }
-        if (Loader.isModLoaded("ingameime"))
-            throw new RuntimeException("IngameIME is detected, the duplicate IME backend is not allowed.");
     }
 
     /**
