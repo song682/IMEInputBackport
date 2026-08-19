@@ -78,8 +78,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     private boolean lastImeEnabled = false;
     /** 是否已尝试过（失败）获取句柄，避免每 tick 刷屏日志 */
     private boolean handleLookupFailedLogged = false;
-    /** IBus 安装失败是否已记日志（保持每 tick 重试但只警告一次） */
-    private boolean ibusInstallFailedLogged = false;
+    /** Linux 后端安装失败是否已记日志（保持每 tick 重试但只警告一次） */
+    private boolean linuxInstallFailedLogged = false;
 
     /**
      * 按键转发用：按下时记住每个 LWJGL 键码对应的 keysym，释放时原样回放。
@@ -91,7 +91,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     /**
      * 配置的后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
-     * {@code BACKEND_IMM32}），由 {@link #init(int, boolean)} 从 Forge 配置传入。
+     * {@code BACKEND_IMM32} / {@code BACKEND_IBUS} / {@code BACKEND_FCITX}），
+     * 由 {@link #init(int, boolean)} 从 Forge 配置传入。
      * Configured backend mode, passed in from the Forge config via
      * {@link #init(int, boolean)}.
      */
@@ -175,7 +176,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * backend install is deferred to the first tick (Display exists by then).
      *
      * @param mode      后端模式（{@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
-     *                  {@code BACKEND_IMM32}）
+     *                  {@code BACKEND_IMM32} / {@code BACKEND_IBUS} / {@code BACKEND_FCITX}）
      * @param nativeBar true = 原生候选条（默认）；false = 自绘候选框
      */
     public static void init(int mode, boolean nativeBar) {
@@ -340,25 +341,25 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * {@code MixinGuiScreenEventBridge}，包裹 {@code GuiScreen.handleKeyboardInput()}
      * 调用点）。
      * <p>
-     * Linux/IBus 路径：IME 激活时把当前 LWJGL 键盘事件映射为 X keysym 同步转发
-     * 给 Rime（{@link IMEBridge#processKey}），仅当 Rime 确实消费时才取消事件——
+     * Linux/IBus·Fcitx 路径：IME 激活时把当前 LWJGL 键盘事件映射为 X keysym 同步转发
+     * 给输入法引擎（{@link IMEBridge#processKey}），仅当引擎确实消费时才取消事件——
      * 未消费（英文直输、无关键、空闲 Escape）一律放行，不会出现 Esc 被吞、
-     * 界面卡死的情况；未安装/未激活/非 IBus 后端时不碰事件。
+     * 界面卡死的情况；未安装/未激活/非 Linux 后端时不碰事件。
      * <p>
      * 两平台公共兜底：组字进行中无条件取消——原版 {@code keyTyped}（含 Esc
      * 关屏）、CatFrame 拆分派发与全局按键派发均被压掉，避免组字中字母键被
      * 文本框二次录入、Esc 与输入法“取消组字”语义打架直接关屏等问题；
      * 组字结束后按键照常放行，不影响英文直输。
      * Swallows screen keyboard events while composing; on Linux additionally
-     * forwards keys to Rime via the IBus backend, canceling the event only
-     * when the IME actually consumed the key — unhandled keys (direct English,
-     * idle Escape) always pass through, so the screen can never get stuck.
+     * forwards keys to the IME via the IBus/Fcitx backend, canceling the event
+     * only when the IME actually consumed the key — unhandled keys (direct
+     * English, idle Escape) always pass through, so the screen can never get stuck.
      *
      * @param event CatFrame 键盘事件（Pre，可取消）
      */
     @SubscribeEvent
     public void onGuiKeyboardPre(CatFrameGuiEvent.KeyboardInputEvent.Pre event) {
-        if (forwardKeyToIbus()) {
+        if (forwardKeyToLinuxIme()) {
             event.setCanceled(true);
             return;
         }
@@ -369,16 +370,19 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     /**
-     * Linux/IBus 按键转发：把当前 LWJGL 键盘事件（含释放——Rime 靠 Shift
+     * Linux/IBus·Fcitx 按键转发：把当前 LWJGL 键盘事件（含释放——Rime 靠 Shift
      * 单击释放切中英文）映射为 X keysym 后同步送入输入法。
      * Forwards the current LWJGL keyboard event (incl. releases — Rime toggles
      * ascii mode on a bare Shift release) to the IME as an X keysym.
      *
      * @return true 表示输入法已消费该键，调用方应取消事件
      */
-    private boolean forwardKeyToIbus() {
-        if (!installed || !lastImeEnabled
-                || IMEBridge.getActiveBackend() != IMEBridge.BACKEND_IBUS) {
+    private boolean forwardKeyToLinuxIme() {
+        if (!installed || !lastImeEnabled) {
+            return false;
+        }
+        int backend = IMEBridge.getActiveBackend();
+        if (backend != IMEBridge.BACKEND_IBUS && backend != IMEBridge.BACKEND_FCITX) {
             return false;
         }
         int key = Keyboard.getEventKey() & 0xFF;
@@ -484,8 +488,8 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             return;
         }
 
-        // IBus 后端：泵送异步到达的信号（面板翻页、引擎异步更新等）；
-        // 非 IBus 后端内部直接返回。/ Pump pending IBus signals; no-op elsewhere.
+        // Linux 后端：泵送异步到达的信号（面板翻页、引擎异步更新等）；
+        // 非 Linux 后端内部直接返回。/ Pump pending IBus/Fcitx signals; no-op elsewhere.
         IMEBridge.pump();
 
         Minecraft mc = Minecraft.getMinecraft();
@@ -538,7 +542,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
     }
 
-    /** 延迟安装：获取句柄、安装后端（TSF / IMM32 / IBus）、注册回调 */
+    /** 延迟安装：获取句柄、安装后端（TSF / IMM32 / IBus / Fcitx）、注册回调 */
     private void ensureInstalled() {
         if (installed) {
             return;
@@ -551,17 +555,18 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         }
         IMEBridge.setCallback(this);
         // 安装前同步候选条归属：TSF 路径在安装时据此选择激活模式，
-        // IBus 路径据此决定是否声明 CAP_LOOKUP_TABLE
-        // Sync candidate bar ownership before install (TSF activation / IBus caps)
+        // IBus 路径据此决定是否声明 CAP_LOOKUP_TABLE，Fcitx 路径据此
+        // 决定是否声明 ClientSideInputPanel
+        // Sync candidate bar ownership before install (TSF activation / IBus caps / Fcitx caps)
         IMEBridge.setNativeCandidateBar(nativeCandidateBar);
         int backend = IMEBridge.install(xDisplay, hwnd, backendMode);
         if (backend == IMEBridge.BACKEND_NONE) {
-            // Linux：ibus 连接失败（未运行/地址不可解析），后续 tick 重试，只警告一次
-            // Linux: ibus connect failed (not running / no address); retry later, warn once
-            if (!ibusInstallFailedLogged) {
+            // Linux：ibus/fcitx 连接失败（daemon 未运行/地址不可解析），后续 tick 重试，只警告一次
+            // Linux: daemon connect failed (not running / no address); retry later, warn once
+            if (!linuxInstallFailedLogged) {
                 IMEInputBackport.logger.warn(
-                        "[IME] IBus backend install failed (is ibus-daemon running?), will retry");
-                ibusInstallFailedLogged = true;
+                        "[IME] Linux IME backend install failed (is ibus-daemon or fcitx5 running?), will retry");
+                linuxInstallFailedLogged = true;
             }
             IMEBridge.clearCallback();
             return;

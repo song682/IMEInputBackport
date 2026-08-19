@@ -73,29 +73,33 @@ public class IMEInputBackport {
 
     /**
      * 从 Forge 配置（config/imeinput.cfg）读取 IME 后端模式。
-     * {@code general.backend = AUTO | TSF | IMM32 | IBUS}，默认 AUTO（按平台
-     * 自动匹配：Windows 先试 TSF 失败降级 IMM32，Linux 恒走 IBUS）；
-     * TSF / IMM32 仅 Windows 生效，IBUS 仅 Linux 生效，跨平台取值被忽略
-     * （等同 AUTO）；非法取值回退 AUTO 并记日志。
+     * {@code general.backend = AUTO | TSF | IMM32 | IBUS | FCITX}，默认 AUTO
+     * （按平台自动匹配：Windows 先试 TSF 失败降级 IMM32；Linux 按 IME 环境
+     * 变量在 IBus / Fcitx 间择一并互为兜底）；TSF / IMM32 仅 Windows 生效，
+     * IBUS / FCITX 仅 Linux 生效，跨平台取值被忽略（等同 AUTO）；非法取值
+     * 回退 AUTO 并记日志。
      * Reads the IME backend mode from the Forge config (config/imeinput.cfg):
-     * {@code general.backend = AUTO | TSF | IMM32 | IBUS}, defaulting to AUTO
-     * (platform-matched: Windows tries TSF then IMM32, Linux always IBus).
-     * TSF/IMM32 apply to Windows only and IBUS to Linux only — a value for the
-     * other platform degrades to AUTO; invalid values fall back with a log.
+     * {@code general.backend = AUTO | TSF | IMM32 | IBUS | FCITX}, defaulting
+     * to AUTO (platform-matched: Windows tries TSF then IMM32; Linux picks
+     * IBus or Fcitx5 by the IME environment variables with mutual fallback).
+     * TSF/IMM32 apply to Windows only and IBUS/FCITX to Linux only — a value
+     * for the other platform degrades to AUTO; invalid values fall back with a log.
      *
      * @param config 已加载的 Forge 配置（调用方负责 load/save）
      * @return {@link IMEBridge#BACKEND_AUTO} / {@code BACKEND_TSF} /
-     *         {@code BACKEND_IMM32} / {@code BACKEND_IBUS}
+     *         {@code BACKEND_IMM32} / {@code BACKEND_IBUS} / {@code BACKEND_FCITX}
      */
     private int loadBackendConfig(Configuration config) {
         String value = config.getString("backend", Configuration.CATEGORY_GENERAL, "AUTO",
                 "IME backend: AUTO = match the platform (Windows: try TSF then fall back "
-                        + "to IMM32; Linux: IBus); TSF / IMM32 = force that backend (Windows "
-                        + "only); IBUS = force IBus (Linux only). "
-                        + "IME 后端：AUTO = 按平台自动匹配（Windows 先试 TSF 失败降级 IMM32，"
-                        + "Linux 走 IBus）；TSF / IMM32 = 强制指定后端（仅 Windows）；"
-                        + "IBUS = 强制 IBus（仅 Linux）。",
-                new String[] { "AUTO", "TSF", "IMM32", "IBUS" });
+                        + "to IMM32; Linux: pick IBus or Fcitx5 by the IME environment with "
+                        + "mutual fallback); TSF / IMM32 = force that backend (Windows only); "
+                        + "IBUS / FCITX = force that backend (Linux only). "
+                        + "IME 后端：AUTO = 按平台自动匹配（Windows 先试 TSF 失败降级 IMM32；"
+                        + "Linux 按 IME 环境变量在 IBus / Fcitx 间择一并互为兜底）；"
+                        + "TSF / IMM32 = 强制指定后端（仅 Windows）；"
+                        + "IBUS / FCITX = 强制指定后端（仅 Linux）。",
+                new String[] { "AUTO", "TSF", "IMM32", "IBUS", "FCITX" });
         if ("TSF".equalsIgnoreCase(value)) {
             return IMEBridge.BACKEND_TSF;
         }
@@ -104,6 +108,9 @@ public class IMEInputBackport {
         }
         if ("IBUS".equalsIgnoreCase(value)) {
             return IMEBridge.BACKEND_IBUS;
+        }
+        if ("FCITX".equalsIgnoreCase(value)) {
+            return IMEBridge.BACKEND_FCITX;
         }
         if (!"AUTO".equalsIgnoreCase(value)) {
             logger.warn("[IME] Unknown backend '" + value + "' in imeinput.cfg, using AUTO");

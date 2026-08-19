@@ -27,14 +27,15 @@ public class IMEBridge {
     /**
      * 从模组 jar 中提取并加载与当前平台/架构匹配的本地库。
      * <p>
-     * Linux 上直接加载 {@code libJNILibIMEInput-linux-x64.so}（IBus 后端）；
+     * Linux 上直接加载 {@code libJNILibIMEInput-linux-x64.so}
+     * （IBus + Fcitx5 双后端共存于同一 .so）；
      * Windows 上依据 {@code os.arch} 决定候选 DLL 的尝试顺序，并把全部三份 DLL
      * 作为兑底依次尝试——架构不匹配的 DLL 在 {@link System#load(String)} 阶段
      * 自然失败并被跳过，从而无需精确解析五花八门的 {@code os.arch} 取值
      * （amd64/x86_64/aarch64/arm64 等）。
      * Extracts and loads the platform/arch-matching native library bundled in
-     * the mod jar; Linux loads the IBus backend .so, Windows orders the DLL
-     * candidates by {@code os.arch} with all three tried as fallback.
+     * the mod jar; Linux loads the IBus/Fcitx dual-backend .so, Windows orders
+     * the DLL candidates by {@code os.arch} with all three tried as fallback.
      */
     private static void loadNativeLibrary() {
         java.util.List<String> candidates = new java.util.ArrayList<String>();
@@ -115,18 +116,20 @@ public class IMEBridge {
     }
 
     // ============================================================
-    //  后端编排（AUTO / TSF / IMM32）
-    //  Backend orchestration (AUTO / TSF / IMM32)
+    //  后端编排（AUTO / TSF / IMM32 / IBUS / FCITX）
+    //  Backend orchestration (AUTO / TSF / IMM32 / IBUS / FCITX)
     // ============================================================
 
-    /** 自动：先试 TSF，失败降级 IMM32 / Auto: try TSF first, fall back to IMM32 */
+    /** 自动：Windows 先试 TSF 失败降级 IMM32；Linux 按环境变量在 IBus/Fcitx 间择一并互为兜底 / Auto */
     public static final int BACKEND_AUTO = 0;
     /** 强制 TSF 后端 / Force the TSF backend */
     public static final int BACKEND_TSF = 1;
     /** 强制 IMM32 子类化后端 / Force the IMM32 subclass backend */
     public static final int BACKEND_IMM32 = 2;
-    /** IBus D-Bus 直连后端（Linux 唯一后端）/ IBus D-Bus backend (Linux-only) */
+    /** IBus D-Bus 直连后端（Linux）/ IBus D-Bus backend (Linux-only) */
     public static final int BACKEND_IBUS = 3;
+    /** Fcitx5 D-Bus 直连后端（Linux，InputContext1 协议）/ Fcitx5 D-Bus backend */
+    public static final int BACKEND_FCITX = 4;
     /** 未安装 / Not installed */
     public static final int BACKEND_NONE = -1;
 
@@ -160,16 +163,19 @@ public class IMEBridge {
     }
 
     /**
-     * 平台统一安装入口。Linux 上忽略 mode 恒走 IBus D-Bus 直连
-     * （AUTO/TSF/IMM32 配置值被忽略，安装失败保持 NONE 下个 tick 重试）；
-     * Windows 上 display 参数无意义（传 0），window 即 HWND，行为同两参重载。
-     * Unified per-platform install entry: Linux ignores mode and always goes
-     * IBus (failure keeps NONE so the caller retries next tick); on Windows
-     * display is unused (0) and window is the HWND.
+     * 平台统一安装入口。Linux 上按 mode 选择 IBus / Fcitx5：
+     * 强制模式只试对应后端；AUTO 依环境变量择首选后端（默认 IBus，
+     * 保持历史行为），首选失败再兜底另一后端；安装失败保持 NONE，
+     * 下个 tick 重试。Windows 上 display 参数无意义（传 0），
+     * window 即 HWND，行为同两参重载。
+     * Unified per-platform install entry: on Linux the mode picks IBus or
+     * Fcitx5 (AUTO prefers by environment with the other as fallback,
+     * failure keeps NONE for next-tick retry); on Windows display is unused
+     * (0) and window is the HWND.
      *
      * @param display Linux 上为 X {@code Display*} 指针值；Windows 传 0
      * @param window  Linux 上为 X {@code Window}；Windows 上为 HWND
-     * @param mode    后端模式（仅 Windows 生效）
+     * @param mode    后端模式（Windows：AUTO/TSF/IMM32；Linux：AUTO/IBUS/FCITX）
      * @return 实际激活的后端；Linux 安装失败时返回 {@link #BACKEND_NONE}
      */
     public static int install(long display, long window, int mode) {
@@ -177,8 +183,30 @@ public class IMEBridge {
             return activeBackend;
         }
         if (isLinux()) {
-            if (nativeIbusInstall(display, window)) {
-                activeBackend = BACKEND_IBUS;
+            if (mode == BACKEND_FCITX) {
+                if (nativeFcitxInstall(display, window)) {
+                    activeBackend = BACKEND_FCITX;
+                }
+            } else if (mode == BACKEND_IBUS) {
+                if (nativeIbusInstall(display, window)) {
+                    activeBackend = BACKEND_IBUS;
+                }
+            } else {
+                // AUTO：环境变量择首选，失败兜底另一后端
+                // AUTO: prefer by env, fall back to the other backend
+                if (linuxEnvPrefersFcitx()) {
+                    if (nativeFcitxInstall(display, window)) {
+                        activeBackend = BACKEND_FCITX;
+                    } else if (nativeIbusInstall(display, window)) {
+                        activeBackend = BACKEND_IBUS;
+                    }
+                } else {
+                    if (nativeIbusInstall(display, window)) {
+                        activeBackend = BACKEND_IBUS;
+                    } else if (nativeFcitxInstall(display, window)) {
+                        activeBackend = BACKEND_FCITX;
+                    }
+                }
             }
             return activeBackend;
         }
@@ -196,7 +224,7 @@ public class IMEBridge {
      * 卸载当前激活的后端（窗口重建/重挂前调用）。未安装时无副作用。
      * Uninstalls the active backend (called before window rebuild/rehook).
      *
-     * @param hwnd 窗口句柄（IMM32 路径需要；TSF / IBus 路径忽略）
+     * @param hwnd 窗口句柄（IMM32 路径需要；TSF / IBus / Fcitx 路径忽略）
      */
     public static void uninstall(long hwnd) {
         if (activeBackend == BACKEND_TSF) {
@@ -205,6 +233,8 @@ public class IMEBridge {
             unsubclassWindow(hwnd);
         } else if (activeBackend == BACKEND_IBUS) {
             nativeIbusUninstall();
+        } else if (activeBackend == BACKEND_FCITX) {
+            nativeFcitxUninstall();
         }
         activeBackend = BACKEND_NONE;
     }
@@ -212,10 +242,11 @@ public class IMEBridge {
     /**
      * 按激活后端分发的 IME 使能开关。
      * TSF → {@link #nativeTsfSetEnabled}（AssociateFocus 切换真实/空文档）；
-     * IMM32 → 现有 {@link #setImeEnabled}；IBus → FocusIn / Reset+FocusOut。
+     * IMM32 → 现有 {@link #setImeEnabled}；IBus → FocusIn / Reset+FocusOut；
+     * Fcitx → FocusIn / Reset+FocusOut（InputContext1）。
      * Backend-dispatched IME enable switch.
      *
-     * @param hwnd    窗口句柄（IBus 路径忽略）
+     * @param hwnd    窗口句柄（IBus / Fcitx 路径忽略）
      * @param enabled true 启用中日韩输入，false 强制英文
      */
     public static void setEnabled(long hwnd, boolean enabled) {
@@ -225,17 +256,20 @@ public class IMEBridge {
             setImeEnabled(hwnd, enabled);
         } else if (activeBackend == BACKEND_IBUS) {
             nativeIbusSetEnabled(enabled);
+        } else if (activeBackend == BACKEND_FCITX) {
+            nativeFcitxSetEnabled(enabled);
         }
     }
 
     /**
      * 按激活后端分发的候选/组字窗定位（窗口客户区像素坐标）。
      * TSF → {@link #nativeTsfSetCaretPos}（由 {@code GetTextExt} 交给输入法）；
-     * IMM32 → 现有 {@link #setCandidatePos}；IBus → SetCursorLocation
-     * （本地层经 X 坐标换算为屏幕坐标，供系统面板摆放候选窗）。
+     * IMM32 → 现有 {@link #setCandidatePos}；IBus → SetCursorLocation；
+     * Fcitx → SetCursorRect（两者本地层均经 X 坐标换算为屏幕坐标，
+     * 供系统面板摆放候选窗）。
      * Backend-dispatched candidate/composition window positioning.
      *
-     * @param hwnd 窗口句柄（IBus 路径忽略）
+     * @param hwnd 窗口句柄（IBus / Fcitx 路径忽略）
      * @param x    客户区 X（像素）
      * @param y    客户区 Y（像素，通常为光标底部）
      */
@@ -246,50 +280,92 @@ public class IMEBridge {
             setCandidatePos(hwnd, x, y);
         } else if (activeBackend == BACKEND_IBUS) {
             nativeIbusSetCaretPos(x, y);
+        } else if (activeBackend == BACKEND_FCITX) {
+            nativeFcitxSetCaretPos(x, y);
         }
     }
 
     /**
-     * 泵送并派发已到达的 IBus 信号（preedit/候选/提交回调在此期间触发）。
-     * 仅 IBus 后端有效；每客户端 tick 调用一次，非阻塞。
-     * Pumps and dispatches pending IBus signals (callbacks fire inside);
-     * IBus-only, called once per client tick, non-blocking.
+     * 泵送并派发已到达的 IME 信号（preedit/候选/提交回调在此期间触发）。
+     * 仅 Linux 后端（IBus / Fcitx）有效；每客户端 tick 调用一次，非阻塞。
+     * Pumps and dispatches pending IME signals (callbacks fire inside);
+     * Linux backends only, called once per client tick, non-blocking.
      */
     public static void pump() {
         if (activeBackend == BACKEND_IBUS) {
             nativeIbusPump();
+        } else if (activeBackend == BACKEND_FCITX) {
+            nativeFcitxPump();
         }
     }
 
     /**
-     * 把按键同步转发给输入法（仅 IBus 后端）。返回后本地层已顺带 pump
-     * 一轮，preedit/候选更新与按键同帧可见。非 IBus 后端恒返回 false。
-     * Forwards a key event to the IME synchronously (IBus-only); the native
-     * layer pumps once before returning so preedit updates land same-frame.
-     * Always false on non-IBus backends.
+     * 把按键同步转发给输入法（Linux 后端 IBus / Fcitx）。返回后本地层已
+     * 顺带 pump 一轮，preedit/候选更新与按键同帧可见。非 Linux 后端恒返回
+     * false。释放位统一叠在 state bit 30：IBus 直接使用（IBUS_RELEASE），
+     * Fcitx 由本地层拆出 isRelease 布尔后清位。
+     * Forwards a key event to the IME synchronously (Linux backends); the
+     * native layer pumps once before returning so preedit updates land
+     * same-frame. Always false on non-Linux backends.
      *
      * @param keysym  X11 keysym（可打印 ASCII 即码点，特殊键 0xffXX）
      * @param state   修饰位（Shift=1<<0、Ctrl=1<<2、Alt=1<<3）
-     * @param release true 表示按键释放（本地层叠加 IBus 释放位 1<<30）
+     * @param release true 表示按键释放（本地层叠加释放位 1<<30）
      * @return true 表示输入法已消费该键，调用方应吞掉事件
      */
     public static boolean processKey(int keysym, int state, boolean release) {
-        if (activeBackend != BACKEND_IBUS) {
-            return false;
-        }
         if (release) {
-            // IBus 释放位 / IBus release modifier bit
+            // 释放位约定 / Release modifier bit convention
             state |= 1 << 30;
         }
-        return nativeIbusProcessKey(keysym, 0, state);
+        if (activeBackend == BACKEND_IBUS) {
+            return nativeIbusProcessKey(keysym, 0, state);
+        }
+        if (activeBackend == BACKEND_FCITX) {
+            return nativeFcitxProcessKey(keysym, 0, state);
+        }
+        return false;
     }
 
     /**
      * 当前激活的后端。
-     * @return {@link #BACKEND_TSF} / {@link #BACKEND_IMM32} / {@link #BACKEND_NONE}
+     * @return {@link #BACKEND_TSF} / {@link #BACKEND_IMM32} / {@link #BACKEND_IBUS}
+     *         / {@link #BACKEND_FCITX} / {@link #BACKEND_NONE}
      */
     public static int getActiveBackend() {
         return activeBackend;
+    }
+
+    /**
+     * Linux AUTO 模式首选后端探测：依 IME 环境变量判断用户桌面实际运行的是
+     * Fcitx 还是 IBus。无线索时返回 false（首选 IBus，保持历史行为，失败再
+     * 兜底 Fcitx）。仅读环境变量，不联网、不探测进程。
+     * Picks the preferred Linux backend for AUTO mode from the IME
+     * environment variables; defaults to IBus when no clue is found.
+     *
+     * @return true 表示首选 Fcitx
+     */
+    private static boolean linuxEnvPrefersFcitx() {
+        String xmod = System.getenv("XMODIFIERS");
+        if (xmod != null && xmod.startsWith("@im=fcitx")) {
+            return true;
+        }
+        if (xmod != null && xmod.startsWith("@im=ibus")) {
+            return false;
+        }
+        for (String var : new String[] { "GTK_IM_MODULE", "QT_IM_MODULE", "SDL_IM_MODULE", "GLFW_IM_MODULE" }) {
+            String val = System.getenv(var);
+            if (val != null && val.length() > 0) {
+                String lower = val.toLowerCase();
+                if (lower.contains("fcitx")) {
+                    return true;
+                }
+                if (lower.contains("ibus")) {
+                    return false;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -321,6 +397,7 @@ public class IMEBridge {
             case BACKEND_TSF:   return "TSF";
             case BACKEND_IMM32: return "IMM32";
             case BACKEND_IBUS:  return "IBUS";
+            case BACKEND_FCITX: return "FCITX";
             default:            return "NONE";
         }
     }
@@ -382,6 +459,63 @@ public class IMEBridge {
 
     /** 非阻塞派发已到达的 D-Bus 消息。/ Non-blocking dispatch of pending messages. */
     private static native void nativeIbusPump();
+
+    // ============================================================
+    //  Fcitx 后端 native（由 fcitx_bridge.c 实现，仅 Linux .so 提供）
+    //  Fcitx5 backend natives (implemented in fcitx_bridge.c, Linux .so only)
+    // ============================================================
+
+    /**
+     * 连接会话总线并经 {@code org.fcitx.Fcitx.InputMethod1::CreateInputContext}
+     * 创建 InputContext（InputContext1 协议，fcitx5 ≥5.1.5）。安装链
+     * （连接→Hello→CreateInputContext→SetCapability→信号监听）任一步失败即
+     * 整体回滚返回 false，不抛异常。
+     * Connects to the session bus and creates a Fcitx5 InputContext;
+     * full rollback + false on any failure.
+     *
+     * @param display X {@code Display*} 指针值（坐标换算用，可为 0）
+     * @param window  X {@code Window}（坐标换算用，可为 0）
+     * @return 安装成功返回 true
+     */
+    private static native boolean nativeFcitxInstall(long display, long window);
+
+    /** FocusOut + DestroyIC 并断开连接释放全部状态。/ Disconnects and releases all Fcitx state. */
+    private static native void nativeFcitxUninstall();
+
+    /**
+     * Fcitx 路径的 IME 使能开关：true → FocusIn；false → Reset + FocusOut
+     * 并主动回调空组字/空候选清掉 Java 侧残留预览（语义对齐 IBus 路径）。
+     * Fcitx-path enable switch mirroring the IBus one.
+     *
+     * @param enabled true 允许组字，false 禁用输入法
+     */
+    private static native void nativeFcitxSetEnabled(boolean enabled);
+
+    /**
+     * 上报光标位置（窗口客户区像素）：经 {@code XTranslateCoordinates}
+     * 转屏幕坐标后 SetCursorRect，classicui 据此摆放组字/候选窗。
+     * Reports the caret, translated to screen coords for SetCursorRect.
+     *
+     * @param x 客户区 X（像素）
+     * @param y 客户区 Y（像素）
+     */
+    private static native void nativeFcitxSetCaretPos(int x, int y);
+
+    /**
+     * 同步 ProcessKeyEvent(uuubu)（超时约 100ms，超时按未处理放行）；
+     * 释放位 1<<30 由本地层拆成 isRelease 参数；返回前顺带 pump 一轮。
+     * Synchronous ProcessKeyEvent (~100ms timeout, treated as unhandled);
+     * the bit-30 release flag becomes the isRelease argument.
+     *
+     * @param keyval  X11 keysym
+     * @param keycode 硬件扫描码（未知传 0）
+     * @param state   修饰位（含释放位 1<<30）
+     * @return true 表示输入法已消费该键
+     */
+    private static native boolean nativeFcitxProcessKey(int keyval, int keycode, int state);
+
+    /** 非阻塞派发已到达的 D-Bus 消息。/ Non-blocking dispatch of pending messages. */
+    private static native void nativeFcitxPump();
 
     // ============================================================
     //  TSF 后端 native（由 tsf_bridge.cpp 实现）
