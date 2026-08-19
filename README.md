@@ -30,13 +30,28 @@ all in fullscreen). This mod hooks the OS input method directly into the game:
 | Platform | Backend | Notes |
 |---|---|---|
 | Windows x64 / x86 / arm64 | **TSF**, falls back to **IMM32** | works with MS-Pinyin, Sogou, Rime (weasel), Microsoft IME, … |
-| Linux x64 | **IBus** (D-Bus, X11 / XWayland) | requires a running `ibus-daemon`; tested with Rime (ibus-rime) |
+| Linux x64 | **IBus** and **Fcitx5** (both D-Bus, X11 / XWayland) | `AUTO` picks one by the IME environment variables (`XMODIFIERS`, `GTK_IM_MODULE`, …) with the other as fallback; both bridges ship in the same `.so` |
 | Linux arm64 | — | not supported |
 | macOS | — | not supported |
 
 The native libraries are bundled inside the jar and extracted at runtime — no
-manual setup. The Linux backend binds `libdbus-1.so.3` at runtime via
-`dlopen`, so there is no extra package to install beyond a working IBus setup.
+manual setup. The Linux backends bind `libdbus-1.so.3` at runtime via
+`dlopen`, so there is no extra package to install beyond a working IBus or
+Fcitx5 setup.
+
+**Fcitx5 compatibility notes:**
+
+- Requires **fcitx5 ≥ 5.1.5** (the `InputContext1` D-Bus protocol). Older
+  fcitx5 and classic fcitx 4 are not supported.
+- The mod talks to fcitx5 directly over the session bus — it does *not*
+  depend on the desktop's IM framework switch, so IBus and Fcitx5 can be
+  installed side by side; whichever daemon is running is reachable.
+- A freshly created input context starts in English direct mode (fcitx5's
+  per-context activation state). Press your activate hotkey (default
+  `Ctrl+Space`) once after focusing a text field; fcitx5 remembers the
+  state per application afterwards.
+- Engines verified: Rime (fcitx5-rime). Any engine that consumes
+  `ProcessKeyEvent` normally (pinyin via fcitx5-chinese-addons, etc.) works.
 
 ### Requirements
 
@@ -101,6 +116,11 @@ passed through, always.
 把现代版本（1.19.2 风格）的 CJK 输入法支持移植回 **Minecraft 1.7.10 Forge**：
 内联组字、跟随光标的候选窗、组字期间正确的按键语义。在聊天框里正常打中文。
 
+## 中文
+
+把现代版本（1.19.2 风格）的 CJK 输入法支持移植回 **Minecraft 1.7.10 Forge**：
+内联组字、跟随光标的候选窗、组字期间正确的按键语义。在聊天框里正常打中文。
+
 ### 功能
 
 - **内联组字**：拼音等 pre-edit 文本直接渲染在聊天框、告示牌、成书、铁砧
@@ -115,11 +135,24 @@ passed through, always.
 | 平台 | 后端 | 说明 |
 |---|---|---|
 | Windows x64 / x86 / arm64 | **TSF**，失败降级 **IMM32** | 微软拼音、搜狗、小狼毫（Rime）等均可 |
-| Linux x64 | **IBus**（D-Bus，X11 / XWayland） | 需要 `ibus-daemon` 在运行；已用 Rime（ibus-rime）实测 |
+| Linux x64 | **IBus** 与 **Fcitx5**（均为 D-Bus，X11 / XWayland） | `AUTO` 按 IME 环境变量（`XMODIFIERS`、`GTK_IM_MODULE` 等）择一并互为兜底；两个桥共存于同一个 `.so` |
 | Linux arm64 / macOS | — | 不支持 |
 
 原生库打包在 jar 内、运行时自动解压加载，无需手动安装；Linux 后端通过
-`dlopen` 在运行时绑定 `libdbus-1.so.3`，除正常的 IBus 环境外无额外依赖。
+`dlopen` 在运行时绑定 `libdbus-1.so.3`，除正常的 IBus 或 Fcitx5 环境外
+无额外依赖。
+
+**Fcitx5 兼容说明：**
+
+- 需要 **fcitx5 ≥ 5.1.5**（`InputContext1` D-Bus 协议）；更旧的 fcitx5
+  与 fcitx 4 不支持。
+- 模组经会话总线直连 fcitx5，不依赖桌面的输入法框架切换，因此 IBus 与
+  Fcitx5 可共存安装，谁的 daemon 在运行就能连谁。
+- 新建的输入上下文默认英文直输（fcitx5 按上下文管理激活态）；聚焦
+  文本框后按一次激活热键（默认 `Ctrl+Space`）即可，fcitx5 会按应用
+  记住此状态。
+- 已验证引擎：Rime（fcitx5-rime）；任何正常消费 `ProcessKeyEvent` 的
+  引擎（如 fcitx5-chinese-addons 拼音）均可使用。
 
 ### 前置与安装
 
