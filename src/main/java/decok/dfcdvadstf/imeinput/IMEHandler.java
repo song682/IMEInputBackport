@@ -10,9 +10,11 @@ import decok.dfcdvadstf.imeinput.api.IMEInputAPI;
 import decok.dfcdvadstf.imeinput.compat.NEICompact;
 import decok.dfcdvadstf.imeinput.gui.IMEOverlay;
 import decok.dfcdvadstf.imeinput.gui.IMETheme;
+import decok.dfcdvadstf.imeinput.mixin.MixinGuiScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
+import net.minecraft.util.ChatAllowedCharacters;
 import net.minecraftforge.common.MinecraftForge;
 import org.jnilib.imeinput.IMEBridge;
 import org.lwjgl.input.Keyboard;
@@ -530,7 +532,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
         if (wantEnable) {
             updateCandidatePos(mc, screen, field);
-            drainCommits(field);
+            drainCommits(screen, field);
         } else {
             // 未聚焦文本框时丢弃残留的提交，避免下次插入到错误位置
             commitQueue.clear();
@@ -668,20 +670,40 @@ public final class IMEHandler implements IMEBridge.IMECallback {
     }
 
     /**
-     * 消费已提交文字：默认写入聚焦文本框；有激活的 IME 提交目标（NEI 搜索框/
-     * 数量框等，见 {@link IMECommitTarget}）时交给目标自身的提交管线——NEI 场景
-     * 即走按键注入（对齐 IngameIME 的 NEI 集成），由 LayoutManager 路由并触发
-     * onTextChange 刷新搜索结果，直接 writeText 会绕过刷新；CatFrame EditBox 等
-     * 非 GuiTextField 控件由目标实现自行插入并触发自身刷新。
-     * Drains committed text: writes into the focused field by default; when an
-     * IME commit target is active (NEI search/quantity box, see
-     * {@link IMECommitTarget}) the text goes through the target's own pipeline —
-     * for NEI that is key injection (mirroring IngameIME) so LayoutManager routes
-     * it and onTextChange refreshes the results (a plain writeText would skip the
-     * refresh); for non-GuiTextField controls (CatFrame EditBox) the target
-     * inserts and refreshes itself.
+     * 消费已提交文字：有激活的 IME 提交目标（NEI 搜索框/数量框等，见
+     * {@link IMECommitTarget}）时交给目标自身的提交管线——NEI 场景即走按键
+     * 注入（对齐 IngameIME 的 NEI 集成），由 LayoutManager 路由并触发
+     * onTextChange 刷新搜索结果；默认路径则对当前屏幕“模拟输入”：逐字符
+     * 调用屏幕的 {@code keyTyped}（keyCode 取 {@code KEY_NONE}），完整复刻
+     * 真实按键路径——文本框插入与屏幕自身的派生逻辑（创建世界的文件夹名
+     * 预览、重命名/创建按钮可用性、铁砧命名发包等）随每次注入自然刷新；
+     * 若直接 {@code writeText} 会绕过 {@code keyTyped}，这些派生状态全部失步。
+     * 字符按原版 {@code writeText} 同款规则经 {@link ChatAllowedCharacters}
+     * 过滤，也防止异常字符落进 {@code textboxKeyTyped} 的控制字符分支
+     * （Ctrl+A/C/V/X）；无屏幕可注入时回退直写聚焦文本框。CatFrame EditBox
+     * 等非 GuiTextField 控件由目标实现自行插入并触发自身刷新。
+     * Drains committed text: when an IME commit target is active (NEI
+     * search/quantity box, see {@link IMECommitTarget}) the text goes through
+     * the target's own pipeline — for NEI that is key injection (mirroring
+     * IngameIME) so LayoutManager routes it and onTextChange refreshes the
+     * results. The default path simulates typing on the current screen: each
+     * character is fed through the screen's {@code keyTyped} with
+     * {@code KEY_NONE}, fully mirroring a real keystroke — the field insertion
+     * and the screen's own derived logic (the create-world folder preview,
+     * rename/create button states, the anvil rename packet, ...) all refresh
+     * per injection, whereas a plain {@code writeText} would bypass
+     * {@code keyTyped} and leave every one of them stale. Characters are
+     * filtered with {@link ChatAllowedCharacters} exactly as {@code writeText}
+     * does, which also keeps stray characters out of {@code textboxKeyTyped}'s
+     * control-char branches (Ctrl+A/C/V/X); with no screen to inject into the
+     * write falls back to the focused field directly. Non-GuiTextField controls
+     * (CatFrame EditBox) insert and refresh themselves via their target.
+     *
+     * @param screen 当前屏幕（模拟输入的目标；可为 null）
+     *               Current screen (the injection target; may be null)
+     * @param field  聚焦文本框 / The focused text field
      */
-    private void drainCommits(GuiTextField field) {
+    private void drainCommits(GuiScreen screen, GuiTextField field) {
         String text;
         IMECommitTarget target = activeTarget;
         while ((text = commitQueue.poll()) != null) {
@@ -691,7 +713,20 @@ public final class IMEHandler implements IMEBridge.IMECallback {
             if (target != null) {
                 target.commitText(text);
             } else if (field != null && field.isFocused()) {
-                field.writeText(text);
+                if (screen != null) {
+                    // 模拟输入：逐字符走屏幕 keyTyped，复刻真实按键路径
+                    // Simulated typing: char-by-char through the screen's keyTyped
+                    for (int i = 0; i < text.length(); i++) {
+                        char c = text.charAt(i);
+                        if (ChatAllowedCharacters.isAllowedCharacter(c)) {
+                            ((MixinGuiScreen) screen).imeinput$keyTyped(c, Keyboard.KEY_NONE);
+                        }
+                    }
+                } else {
+                    // 无屏幕可注入时的兜底：直写聚焦文本框
+                    // No screen to inject into: write the focused field directly
+                    field.writeText(text);
+                }
             }
         }
     }
