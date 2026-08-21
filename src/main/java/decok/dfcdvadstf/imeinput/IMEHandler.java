@@ -3,7 +3,7 @@ package decok.dfcdvadstf.imeinput;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
-import decok.dfcdvadstf.catframe.compact.forge.event.CatFrameGuiEvent;
+import decok.dfcdvadstf.catframe.adapter.forge.event.CatFrameGuiEvent;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
 import decok.dfcdvadstf.imeinput.api.IMECommitTarget;
 import decok.dfcdvadstf.imeinput.api.IMEInputAPI;

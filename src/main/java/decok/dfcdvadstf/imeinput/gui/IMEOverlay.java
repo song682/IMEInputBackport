@@ -1,5 +1,6 @@
 package decok.dfcdvadstf.imeinput.gui;
 
+import decok.dfcdvadstf.catframe.ui.GuiGraphicsExtractor;
 import decok.dfcdvadstf.catframe.ui.components.AbstractComponent;
 import decok.dfcdvadstf.catframe.ui.overlay.Overlay;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayContext;
@@ -33,7 +34,7 @@ import org.lwjgl.opengl.GL11;
  * 窗体外观（平面自绘 / 九宫格纹理）与配色统一由 {@link IMETheme} 掌管。
  * <p>
  * IME self-drawn composition overlay (plugged into the CatFrame Overlay system).
- * By default the self-drawn part renders as a <b>single window</b>: the PreEdit
+ * By default, the self-drawn part renders as a <b>single window</b>: the PreEdit
  * section (block highlight + caret) and the self-drawn candidate section share
  * one window chrome, split by an inset separator line; whether they merge is a
  * theme option ({@link IMETheme#mergeSections()} — false stacks two standalone
@@ -149,7 +150,7 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
      * {@code getWidth()/getHeight()} 解析锚点，此处是唯一先于取值的稳定钩子。
      * Visibility gate: IME active + composing (any display mode); the self-drawn
      * candidates only participate when the switch is on.
-     * Also relayouts here, since OverlayManager reads width/height right after
+     * Also, relayouts here, since OverlayManager reads width/height right after
      * this call — the only stable hook that runs before those getters.
      */
     @Override
@@ -283,7 +284,7 @@ public final class IMEOverlay extends AbstractComponent implements Overlay {
      * width. Position was resolved by OverlayManager.
      */
     @Override
-    public void render(int mouseX, int mouseY, float partialTicks) {
+    public void extractRenderState(GuiGraphicsExtractor graphicsExtractor, int mouseX, int mouseY, float partialTicks) {
         IMEBridge.CompositionInfo info = IMEHandler.getCompositionInfo();
         IMEHandler.CandidatePage page = visibleCandidatePage();
         if (info == null && page == null) {

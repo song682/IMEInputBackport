@@ -18,7 +18,12 @@ import org.jnilib.imeinput.IMEBridge;
 // NEI（官方版或 GTNH 非官方版）为可选：提交注入经其按键管道路由。
 // JourneyMap is optional: its fullscreen map suppresses the IME while open.
 // JourneyMap 为可选：全屏地图打开期间压制 IME。
-@Mod(modid = Tags.MODID, name = Tags.NAME, version = Tags.VERSION, useMetadata = true, dependencies = "required-after:catframe@[0.5.8,);after:NotEnoughItems;after:emi@[1.1.24-beta1,);after:journeymap")
+@Mod(
+        modid = Tags.MODID,
+        name = Tags.NAME,
+        version = Tags.VERSION,
+        useMetadata = true,
+        dependencies = "required-after:catframe@[0.7.0,);after:NotEnoughItems;after:emi@[1.1.24-beta1,);after:journeymap")
 public class IMEInputBackport {
     public static Logger logger = LogManager.getLogger(Tags.NAME);
 
