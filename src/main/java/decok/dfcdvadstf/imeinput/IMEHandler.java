@@ -505,11 +505,20 @@ public final class IMEHandler implements IMEBridge.IMECallback {
         GuiTextField field = focusedField.get();
 
         // 每 tick 查询激活的 IME 提交目标（NEI 搜索框/数量框、CatFrame EditBox 等）：
-        // 非 GuiTextField 体系的控件靠它驱动 IME 开关与提交路由
+        // 非 GuiTextField 体系的控件靠它驱动 IME 开关与提交路由；注册制目标
+        // 均无激活时，回退识别屏幕自身——纯原版界面（如书与笔）经混入直接
+        // 注入 IMECommitTarget 接口，不走注册。
         // Poll the active IME commit target each tick (NEI search/quantity box,
         // CatFrame EditBox, ...): non-GuiTextField controls rely on it for the
-        // IME switch and commit routing
+        // IME switch and commit routing. When no registered target is active,
+        // fall back to the screen itself — pure vanilla screens (e.g. book &
+        // quill) get the IMECommitTarget interface injected by mixin and never
+        // register.
         IMECommitTarget target = IMEInputAPI.getActiveTarget();
+        if (target == null && screen instanceof IMECommitTarget
+                && ((IMECommitTarget) screen).shouldReceiveInput()) {
+            target = (IMECommitTarget) screen;
+        }
         activeTarget = target;
 
         // 仅当处于某个 GUI 且有聚焦文本框（原生或兼容目标）时启用 IME；

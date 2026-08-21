@@ -7,7 +7,6 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import decok.dfcdvadstf.imeinput.compat.JourneyMapCompact;
 import decok.dfcdvadstf.imeinput.compat.NEICompact;
 import decok.dfcdvadstf.imeinput.compat.EMICompact;
-import decok.dfcdvadstf.imeinput.compat.VanillaBookCompact;
 import net.minecraftforge.common.config.Configuration;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -58,11 +57,6 @@ public class IMEInputBackport {
                 }
             }
             IMEHandler.init(mode, nativeBar);
-            // Register the built-in vanilla book & quill commit target (the
-            // screen has no GuiTextField, so it must hook in explicitly).
-            // 注册原版“书与笔”界面的内置提交目标（该界面没有 GuiTextField，
-            // 默认焦点路径不会激活 IME，需显式接入）。
-            VanillaBookCompact.register();
             // Register built-in IME commit targets (NEI search/quantity box).
             // 注册内置 IME 提交目标（NEI/EMI 搜索框/数量框；未装 NEI/EMI 时为空操作）。
             if (Loader.isModLoaded("NotEnoughItems")) {
