@@ -47,15 +47,6 @@ package decok.dfcdvadstf.imeinput.api;
  * CatFrame's {@code AbstractEditBox}) get the same IME support as vanilla text
  * fields — focus needs no Mixin tracking, and the candidate anchor comes from
  * {@code getCaretX/Y}.
- * <p>
- * 接入双轨：第三方模组/前置的自绘控件通过 {@link IMEInputAPI#register(IMECommitTarget)}
- * 注册；纯原版界面（如书与笔 {@code GuiScreenBook}）则由本模组混入直接把
- * 本接口注入屏幕类，{@code IMEHandler} 以 {@code instanceof} 识别，无需注册。
- * Two integration tracks: third-party mods/predecessors register their
- * self-drawn controls via {@link IMEInputAPI#register(IMECommitTarget)}; pure
- * vanilla screens (e.g. book & quill, {@code GuiScreenBook}) get this
- * interface injected directly into the screen class by the mod's mixins and
- * are recognised via {@code instanceof} — no registration involved.
  */
 public interface IMECommitTarget {
 
