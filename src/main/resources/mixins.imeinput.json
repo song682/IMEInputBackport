@@ -6,7 +6,8 @@
   "mixins": [],
   "client": [
     "MixinGuiTextField",
-    "MixinGuiScreen"
+    "MixinGuiScreen",
+    "MixinGuiScreenBook"
   ],
   "server": []
 }
