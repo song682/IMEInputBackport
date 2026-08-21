@@ -5,7 +5,10 @@
   "compatibilityLevel": "JAVA_8",
   "mixins": [],
   "client": [
-    "MixinGuiTextField"
+    "MixinGuiTextField",
+    "MixinGuiCreateWorld",
+    "MixinGuiRenameWorld",
+    "MixinGuiRepair"
   ],
   "server": []
 }
