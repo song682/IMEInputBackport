@@ -1,0 +1,32 @@
+[12:42:16] [main/INFO]: Setting user: Player757
+[12:42:17] [Client thread/INFO]: LWJGL Version: 2.9.1
+[12:42:22] [Client thread/INFO]: Reloading ResourceManager: Default, FMLFileResourcePack:Forge Mod Loader, FMLFileResourcePack:Minecraft Forge, FMLFileResourcePack:NotEnoughItems, FMLFileResourcePack:CatFrame, FMLFileResourcePack:UniMixins, FMLFileResourcePack:UniMixins: Mixin (UniMix), FMLFileResourcePack:UniMixins: Compatibility, FMLFileResourcePack:UniMixins: Mixingasm, FMLFileResourcePack:UniMixins: SpongeMixins, FMLFileResourcePack:UniMixins: MixinBooterLegacy, FMLFileResourcePack:UniMixins: GTNHMixins, FMLFileResourcePack:UniMixins: MixinExtras, FMLFileResourcePack:IMEInoutBackport
+[12:42:24] [Sound Library Loader/INFO]: Sound engine started
+[12:42:25] [Client thread/INFO]: Created: 16x16 textures/blocks-atlas
+[12:42:40] [Client thread/INFO]: Created: 16x16 textures/items-atlas
+[12:42:55] [Client thread/INFO]: Reloading ResourceManager: Default, FMLFileResourcePack:Forge Mod Loader, FMLFileResourcePack:Minecraft Forge, FMLFileResourcePack:NotEnoughItems, FMLFileResourcePack:CatFrame, FMLFileResourcePack:UniMixins, FMLFileResourcePack:UniMixins: Mixin (UniMix), FMLFileResourcePack:UniMixins: Compatibility, FMLFileResourcePack:UniMixins: Mixingasm, FMLFileResourcePack:UniMixins: SpongeMixins, FMLFileResourcePack:UniMixins: MixinBooterLegacy, FMLFileResourcePack:UniMixins: GTNHMixins, FMLFileResourcePack:UniMixins: MixinExtras, FMLFileResourcePack:IMEInoutBackport
+[12:42:55] [Client thread/INFO]: Created: 512x256 textures/blocks-atlas
+[12:43:10] [Client thread/INFO]: Created: 256x256 textures/items-atlas
+[12:43:25] [Sound Library Loader/INFO]: Sound engine started
+[12:44:33] [Server thread/INFO]: Starting integrated minecraft server version 1.7.10
+[12:44:33] [Server thread/INFO]: Generating keypair
+[12:44:33] [Server thread/INFO]: Converting map!
+[12:44:33] [Server thread/INFO]: Scanning folders...
+[12:44:33] [Server thread/INFO]: Total conversion count is 0
+[12:44:34] [Server thread/INFO]: Preparing start region for level 0
+[12:44:35] [Server thread/INFO]: Preparing spawn area: 34%
+[12:44:36] [Server thread/INFO]: Preparing spawn area: 88%
+[12:44:36] [Server thread/INFO]: Changing view distance to 12, from 10
+[12:44:37] [Server thread/INFO]: Player757[local:E:5afe215b] logged in with entity id 107 at (-158.5, 66.0, 254.5)
+[12:44:37] [Server thread/INFO]: Player757 joined the game
+[12:44:38] [Server thread/INFO]: Saving and pausing game...
+[12:44:38] [Server thread/INFO]: Saving chunks for level 'New World我不知道'/Overworld
+[12:44:39] [Server thread/INFO]: Saving chunks for level 'New World我不知道'/Nether
+[12:44:39] [Server thread/INFO]: Saving chunks for level 'New World我不知道'/The End
+[12:44:39] [Server thread/INFO]: Stopping server
+[12:44:39] [Server thread/INFO]: Saving players
+[12:44:39] [Server thread/INFO]: Saving worlds
+[12:44:39] [Server thread/INFO]: Saving chunks for level 'New World我不知道'/Overworld
+[12:44:39] [Server thread/INFO]: Saving chunks for level 'New World我不知道'/Nether
+[12:44:39] [Server thread/INFO]: Saving chunks for level 'New World我不知道'/The End
+[12:44:42] [Client thread/INFO]: Stopping!

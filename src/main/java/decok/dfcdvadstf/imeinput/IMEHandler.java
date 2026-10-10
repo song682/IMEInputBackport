@@ -3,7 +3,7 @@ package decok.dfcdvadstf.imeinput;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
-import decok.dfcdvadstf.catframe.adapter.forge.event.CatFrameGuiEvent;
+import decok.dfcdvadstf.catframe.adapter.forge.event.KeyBoardInputEvent;
 import decok.dfcdvadstf.catframe.ui.overlay.OverlayManager;
 import decok.dfcdvadstf.imeinput.api.IMECommitTarget;
 import decok.dfcdvadstf.imeinput.api.IMEInputAPI;
@@ -339,7 +339,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
 
     /**
      * 组字期间吞掉屏幕键盘事件，Linux 上额外承担按键→Rime 的转发：订阅
-     * CatFrame 回填的 {@link CatFrameGuiEvent.KeyboardInputEvent.Pre}（发射自其
+     * CatFrame 回填的 {@link KeyBoardInputEvent.Pre}（发射自其
      * {@code MixinGuiScreenEventBridge}，包裹 {@code GuiScreen.handleKeyboardInput()}
      * 调用点）。
      * <p>
@@ -360,7 +360,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * @param event CatFrame 键盘事件（Pre，可取消）
      */
     @SubscribeEvent
-    public void onGuiKeyboardPre(CatFrameGuiEvent.KeyboardInputEvent.Pre event) {
+    public void onGuiKeyboardPre(KeyBoardInputEvent.Pre event) {
         if (forwardKeyToLinuxIme()) {
             event.setCanceled(true);
             return;
@@ -426,6 +426,7 @@ public final class IMEHandler implements IMEBridge.IMECallback {
      * @param key LWJGL 键码
      * @param ch  事件字符（按下时有效）
      * @return X keysym；0 表示无法映射
+     *
      */
     private static int keysymFromEvent(int key, char ch) {
         switch (key) {

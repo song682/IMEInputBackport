@@ -24,7 +24,7 @@ import org.jnilib.imeinput.IMEBridge;
         name = Tags.NAME,
         version = Tags.VERSION,
         useMetadata = true,
-        dependencies = "required-after:catframe@[0.7.0,);after:NotEnoughItems;after:emi@[1.1.24-beta1,);after:journeymap")
+        dependencies = "required-after:catframe@[0.10.3,);after:NotEnoughItems;after:emi@[1.1.24-beta1,);after:journeymap")
 public class IMEInputBackport {
     public static Logger logger = LogManager.getLogger(Tags.NAME);
 
